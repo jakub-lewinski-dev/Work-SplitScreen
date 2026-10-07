@@ -2,9 +2,13 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const path = require('path'); // <--- DODAJ TĘ LINIJKĘ
 
 const app = express();
 app.use(cors());
+
+// <--- DODAJ TĘ LINIJKĘ (wskazanie folderu client dla Expressa)
+app.use(express.static(path.join(__dirname, '../client')));
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -28,7 +32,7 @@ io.on('connection', (socket) => {
 
   // Listen for text changes from any client
   socket.on('text-change', ({ panel, content }) => {
-    documents[panel] = content;
+    documents[panel] = content; // <--- UPEWNIJ SIĘ, ŻE TU SĄ KWADRATOWE NAWIASY []
     // Broadcast changes to all other clients in the LAN
     socket.broadcast.emit('text-change', { panel, content });
   });
