@@ -164,11 +164,16 @@ function createPaneElement(fileName, paneSide) {
         const rect = pane.getBoundingClientRect();
         const x = e.clientX - rect.left;
         
+        // Określamy dokładniej, na którą połowę tego konkretnego panelu upuszczono plik
         if (x < rect.width / 2) {
-            splitState.right = splitState.left;
-            splitState.left = draggedFileName;
+            splitState[paneSide] = draggedFileName; // Zastępuje tę stronę, nad którą upuszczono (po lewej stronie panelu)
         } else {
-            splitState.right = draggedFileName;
+            // Jeśli upuszczono na prawą połowę, a mamy wolne miejsce po prawej, wrzuć tam, w przeciwnym razie zastąp tę stronę
+            if (paneSide === 'left') {
+                splitState.right = draggedFileName;
+            } else {
+                splitState[paneSide] = draggedFileName;
+            }
         }
         renderWorkspace();
     });
@@ -213,8 +218,17 @@ if (filesListEl) {
         }
 
         // Kliknięcie w plik otwiera go w AKTYWNYM panelu (szanując split-screen)
-        openFileInPane(fileName, activePane);
-    });
+        let targetPane = activePane;
+
+        // Jeśli lewa strona jest zajęta, a prawa pusta, otwórz nowy plik automatycznie po prawej
+        if (splitState.left && !splitState.right && splitState.left !== fileName) {
+            targetPane = 'right';
+        } else if (!splitState.left && splitState.right && splitState.right !== fileName) {
+            targetPane = 'left';
+        }
+
+    openFileInPane(fileName, targetPane);   
+});
 }
 
 //----------------------------------------------------------------------------------------//
