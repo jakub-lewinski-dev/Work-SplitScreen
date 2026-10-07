@@ -1,7 +1,10 @@
+// Połączenie z serwerem Socket.io
+const socket = io();
+
 //----------------------------------------------------------------------------------------//
 // STAN APLIKACJI I LICZNIKI
 //----------------------------------------------------------------------------------------//
-const fileContents = {};
+let fileContents = {};
 let fileCounter = 1;
 
 // Aktywne pliki w split-screenie (lewy i prawy)
@@ -14,11 +17,44 @@ let splitState = {
 let activePane = 'left';
 
 //----------------------------------------------------------------------------------------//
+// SYNCHRONIZACJA SOCKET.IO (ODBIERANIE DANYCH Z SERWERA)
+//----------------------------------------------------------------------------------------//
+socket.on('init-document', (serverDocuments) => {
+    // Pobieramy stan dokumentów z serwera przy połączeniu
+    fileContents = serverDocuments;
+    
+    // Jeśli pliki istnieją, odświeżamy listę i workspace
+    const filesList = document.getElementById('files-list');
+    if (filesList) filesList.innerHTML = '';
+    
+    for (const fileName in fileContents) {
+        addOpenFile(fileName, false); // false, żeby nie emitować ponownego tworzenia
+    }
+    renderWorkspace();
+});
+
+// Nasłuchiwanie zmian tekstu od innych użytkowników w sieci LAN
+socket.on('text-change', ({ panel, content }) => {
+    const fileName = splitState[panel];
+    if (fileName) {
+        fileContents[fileName] = content;
+        // Znajdź odpowiedni textarea w panelu i zaktualizuj tekst, jeśli różni się od obecnego
+        const paneElement = document.querySelector(`.editor-pane[data-pane="${panel}"]`);
+        if (paneElement) {
+            const textarea = paneElement.querySelector('.pane-textarea');
+            if (textarea && textarea.value !== content) {
+                textarea.value = content;
+            }
+        }
+    }
+});
+
+//----------------------------------------------------------------------------------------//
 // ROZWIJANIE MENU NOWEGO ELEMENTU
 //----------------------------------------------------------------------------------------//
 function toggleNewItemMenu() {
     const menu = document.getElementById('new-item-menu');
-    menu.classList.toggle('show');
+    if (menu) menu.classList.toggle('show');
 }
 
 // Zamykanie menu po kliknięciu w dowolne miejsce poza nim
@@ -56,6 +92,9 @@ function createTextEditorFile() {
 function addOpenFile(fileName) {
     const filesList = document.getElementById('files-list');
     if (!filesList) return;
+
+    // Sprawdź czy plik już jest na liście, żeby nie duplikować
+    if (filesList.querySelector(`[data-filename="${fileName}"]`)) return;
 
     const li = document.createElement('li');
     li.className = 'file-item';
@@ -127,6 +166,7 @@ function renderWorkspace() {
 function createPaneElement(fileName, paneSide) {
     const pane = document.createElement('div');
     pane.className = 'editor-pane';
+    pane.dataset.pane = paneSide; // Przydatne do wyszukiwania panelu przy synchronizacji
     
     pane.innerHTML = `
         <div class="editor-top-bar" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; background-color: #2f3136; border-bottom: 1px solid #202225; font-size: 14px; font-weight: bold; color: #dcddde;">
@@ -139,9 +179,13 @@ function createPaneElement(fileName, paneSide) {
     const textarea = pane.querySelector('.pane-textarea');
     textarea.value = fileContents[fileName] || "";
 
-    // Zapis tekstu w locie
+    // Zapis tekstu w locie i wysyłanie przez Socket.io do drugiego komputera
     textarea.addEventListener('input', (e) => {
-        fileContents[fileName] = e.target.value;
+        const content = e.target.value;
+        fileContents[fileName] = content;
+        
+        // Wysyłamy zmianę na serwer przypisując ją do odpowiedniej strony (left/right)
+        socket.emit('text-change', { panel: paneSide, content: content });
     });
 
     // Śledzenie aktywnego panelu
@@ -164,11 +208,9 @@ function createPaneElement(fileName, paneSide) {
         const rect = pane.getBoundingClientRect();
         const x = e.clientX - rect.left;
         
-        // Określamy dokładniej, na którą połowę tego konkretnego panelu upuszczono plik
         if (x < rect.width / 2) {
-            splitState[paneSide] = draggedFileName; // Zastępuje tę stronę, nad którą upuszczono (po lewej stronie panelu)
+            splitState[paneSide] = draggedFileName;
         } else {
-            // Jeśli upuszczono na prawą połowę, a mamy wolne miejsce po prawej, wrzuć tam, w przeciwnym razie zastąp tę stronę
             if (paneSide === 'left') {
                 splitState.right = draggedFileName;
             } else {
@@ -217,18 +259,16 @@ if (filesListEl) {
             return;
         }
 
-        // Kliknięcie w plik otwiera go w AKTYWNYM panelu (szanując split-screen)
         let targetPane = activePane;
 
-        // Jeśli lewa strona jest zajęta, a prawa pusta, otwórz nowy plik automatycznie po prawej
         if (splitState.left && !splitState.right && splitState.left !== fileName) {
             targetPane = 'right';
         } else if (!splitState.left && splitState.right && splitState.right !== fileName) {
             targetPane = 'left';
         }
 
-    openFileInPane(fileName, targetPane);   
-});
+        openFileInPane(fileName, targetPane);   
+    });
 }
 
 //----------------------------------------------------------------------------------------//
