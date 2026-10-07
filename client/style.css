@@ -1,0 +1,237 @@
+:root {
+    --discord-darkest: #202225;
+    --discord-dark: #2f3136;
+    --discord-medium: #36393f;
+    --discord-light: #4f545c;
+    --discord-text: #dcddde;
+    --discord-text-muted: #8e9297;
+    --discord-accent: #5865f2; /* Blurple */
+    --discord-accent-hover: #4752c4;
+    --discord-danger: #ed4245;
+    --discord-danger-hover: #c03537;
+    --discord-border: #202225;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body, html {
+    width: 100%;
+    height: 100vh;
+    font-family: 'GG Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    background-color: var(--discord-dark);
+    color: var(--discord-text);
+    overflow: hidden;
+}
+
+/* --- Główny kontener (Flexbox) --- */
+.app-container {
+    display: flex;
+    width: 100%;
+    height: 100vh;
+}
+
+/* --- Boczny panel (Aside / Sidebar) --- */
+.sidebar {
+    width: 280px;
+    background-color: var(--discord-darkest);
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid rgba(0, 0, 0, 0.2);
+    transition: width 0.3s ease;
+}
+
+.sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 16px;
+    font-size: 16px;
+    font-weight: bold;
+    border-bottom: 2px solid var(--discord-medium);
+}
+
+.sidebar-header h2 {
+    font-size: 16px;
+    color: #ffffff;
+    letter-spacing: 0.5px;
+}
+
+#toggle-sidebar {
+    background: transparent;
+    border: none;
+    color: var(--discord-text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background 0.2s, color 0.2s;
+}
+
+#toggle-sidebar:hover {
+    background-color: var(--discord-medium);
+    color: #ffffff;
+}
+
+/* Styl dla całego kontenera dropdowna */
+.dropdown-section {
+    position: relative;
+    padding: 16px;
+    background-color: #202225;
+}
+
+/* Przycisk */
+.dropdown-toggle {
+    width: 100%;
+    background-color: #5865f2; /* Kolor Discord Blurple */
+    color: white;
+    border: none;
+    padding: 10px 14px;
+    border-radius: 4px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+}
+
+.dropdown-toggle:hover {
+    background-color: #4752c4;
+}
+
+/* Menu – domyślnie schowane */
+.dropdown-menu {
+    display: none; 
+    margin-top: 8px;
+    background-color: #36393f;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+}
+
+/* Klasa, którą włącza JavaScript, żeby pokazać menu */
+.dropdown-menu.show {
+    display: block;
+}
+
+/* Przyciski wewnątrz menu */
+.dropdown-menu button {
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: #dcddde;
+    padding: 10px 14px;
+    text-align: left;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.dropdown-menu button:hover {
+    background-color: #5865f2;
+    color: white;
+}
+
+/* --- Lista otwartych plików --- */
+.open-files-container {
+    flex: 1;
+    padding: 16px;
+    overflow-y: auto;
+}
+
+.open-files-container h3 {
+    font-size: 12px;
+    text-transform: uppercase;
+    color: var(--discord-text-muted);
+    margin-bottom: 10px;
+    letter-spacing: 1px;
+}
+
+.files-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.file-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-radius: 4px;
+    background-color: transparent;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.file-item:hover {
+    background-color: rgba(79, 84, 92, 0.16);
+    color: #ffffff;
+}
+
+.file-item.active {
+    background-color: rgba(79, 84, 92, 0.32);
+    color: #ffffff;
+}
+
+.file-name {
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.file-actions button {
+    background: transparent;
+    border: none;
+    color: var(--discord-text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 4px;
+    border-radius: 3px;
+    transition: color 0.15s, background 0.15s;
+}
+
+.file-actions button:hover {
+    color: #ffffff;
+    background-color: var(--discord-medium);
+}
+
+.file-actions .close-file:hover {
+    color: var(--discord-danger);
+}
+
+/* --- Główny obszar roboczy (Main) --- */
+.main-content {
+    display: flex;
+    flex: 1;
+    background-color: var(--discord-medium);
+    position: relative;
+    overflow: hidden;
+}
+
+/* Pojedynczy panel edytora w trybie split */
+.editor-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--discord-darkest);
+    height: 100%;
+}
+
+.editor-pane:last-child {
+    border-right: none;
+}
+
+.empty-state {
+    color: var(--discord-text-muted);
+    font-size: 15px;
+    text-align: center;
+    padding: 20px;
+}
