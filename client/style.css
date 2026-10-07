@@ -76,53 +76,59 @@ body, html {
     color: #ffffff;
 }
 
-/* --- Rozwijane menu nowego elementu --- */
+/* Styl dla całego kontenera dropdowna */
 .dropdown-section {
     position: relative;
     padding: 16px;
-    border-bottom: 1px solid var(--discord-medium);
+    background-color: #202225;
 }
 
+/* Przycisk */
 .dropdown-toggle {
     width: 100%;
-    background-color: var(--discord-accent);
+    background-color: #5865f2; /* Kolor Discord Blurple */
     color: white;
     border: none;
     padding: 10px 14px;
     border-radius: 4px;
     font-weight: 600;
     cursor: pointer;
-    transition: background-color 0.2s;
     text-align: left;
 }
 
 .dropdown-toggle:hover {
-    background-color: var(--discord-accent-hover);
+    background-color: #4752c4;
 }
 
+/* Menu – domyślnie schowane */
 .dropdown-menu {
-    display: none; /* Na start schowane, odpalane JS-em */
+    display: none; 
     margin-top: 8px;
-    background-color: var(--discord-medium);
+    background-color: #36393f;
     border-radius: 4px;
     overflow: hidden;
     box-shadow: 0 8px 16px rgba(0,0,0,0.3);
 }
 
+/* Klasa, którą włącza JavaScript, żeby pokazać menu */
+.dropdown-menu.show {
+    display: block;
+}
+
+/* Przyciski wewnątrz menu */
 .dropdown-menu button {
     width: 100%;
     background: transparent;
     border: none;
-    color: var(--discord-text);
+    color: #dcddde;
     padding: 10px 14px;
     text-align: left;
     cursor: pointer;
     font-size: 14px;
-    transition: background 0.15s, color 0.15s;
 }
 
 .dropdown-menu button:hover {
-    background-color: var(--discord-accent);
+    background-color: #5865f2;
     color: white;
 }
 

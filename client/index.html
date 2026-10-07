@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Work SplitScreen - LAN Notepad</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css"><link>
 </head>
 <body>
 
@@ -20,11 +20,16 @@
 
             <!-- Rozwijana sekcja / menu dodawania nowego obiektu -->
             <div class="dropdown-section">
-                <button class="dropdown-toggle" id="new-item-btn">+ Nowy element ▾</button>
+                <!-- Przycisk sterujący -->
+                <button class="dropdown-toggle" id="new-item-btn" onclick="toggleNewItemMenu()">
+                    + Nowy element ▾
+                </button>
+                
+                <!-- Rozwijane menu -->
                 <div class="dropdown-menu" id="new-item-menu">
-                    <button data-type="text">📝 Edytor tekstu</button>
-                    <button data-type="paint">🎨 Prosty Paint</button>
-                    <button data-type="calc">🧮 Kalkulator</button>
+                    <button onclick="createTextEditorFile()">📝 Edytor tekstu</button>
+                    <button>🎨 Prosty Paint</button>
+                    <button>🧮 Kalkulator</button>
                 </div>
             </div>
 
@@ -32,21 +37,7 @@
             <div class="open-files-container">
                 <h3>Otwarte pliki</h3>
                 <ul class="files-list" id="files-list">
-                    <!-- Przykładowy element, jak to będzie wyglądać -->
-                    <li class="file-item active">
-                        <span class="file-name">Notatka_1.txt</span>
-                        <div class="file-actions">
-                            <button class="save-file" title="Zapisz na dysku">💾</button>
-                            <button class="close-file" title="Zamknij">✕</button>
-                        </div>
-                    </li>
-                    <li class="file-item">
-                        <span class="file-name">Szkic_1.paint</span>
-                        <div class="file-actions">
-                            <button class="save-file" title="Zapisz na dysku">💾</button>
-                            <button class="close-file" title="Zamknij">✕</button>
-                        </div>
-                    </li>
+                    
                 </ul>
             </div>
         </aside>
@@ -60,4 +51,5 @@
         </main>
     </div>
 </body>
+<script src="localscript.js"></script>
 </html>
