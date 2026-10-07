@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Work SplitScreen - LAN Notepad</title>
+    <link rel="stylesheet" href="style.css">
     <style>
         :root {
             --bg-color: #1e1e1e;
@@ -80,25 +81,58 @@
 </head>
 <body>
 
+    <body>
     <div class="app-container">
-        <!-- Left Pane -->
-        <div class="pane">
-            <div class="pane-header">
-                <span>File 1 (Left)</span>
-                <span class="status-indicator" id="left-status">Ready</span>
+        <!-- Boczny panel (Sidebar / Aside) -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h2>Workspace</h2>
+                <!-- Przycisk do chowania/otwierania panelu -->
+                <button id="toggle-sidebar" aria-label="Toggle Sidebar">◀</button>
             </div>
-            <textarea id="left-editor" placeholder="Type text for the left file here..."></textarea>
-        </div>
 
-        <!-- Right Pane -->
-        <div class="pane">
-            <div class="pane-header">
-                <span>File 2 (Right)</span>
-                <span class="status-indicator" id="right-status">Ready</span>
+            <!-- Rozwijana sekcja / menu dodawania nowego obiektu -->
+            <div class="dropdown-section">
+                <button class="dropdown-toggle" id="new-item-btn">+ Nowy element ▾</button>
+                <div class="dropdown-menu" id="new-item-menu">
+                    <button data-type="text">📝 Edytor tekstu</button>
+                    <button data-type="paint">🎨 Prosty Paint</button>
+                    <button data-type="calc">🧮 Kalkulator</button>
+                </div>
             </div>
-            <textarea id="right-editor" placeholder="Type text for the right file here..."></textarea>
-        </div>
+
+            <!-- Lista wszystkich otwartych plików / obiektów -->
+            <div class="open-files-container">
+                <h3>Otwarte pliki</h3>
+                <ul class="files-list" id="files-list">
+                    <!-- Przykładowy element, jak to będzie wyglądać -->
+                    <li class="file-item active">
+                        <span class="file-name">Notatka_1.txt</span>
+                        <div class="file-actions">
+                            <button class="save-file" title="Zapisz na dysku">💾</button>
+                            <button class="close-file" title="Zamknij">✕</button>
+                        </div>
+                    </li>
+                    <li class="file-item">
+                        <span class="file-name">Szkic_1.paint</span>
+                        <div class="file-actions">
+                            <button class="save-file" title="Zapisz na dysku">💾</button>
+                            <button class="close-file" title="Zamknij">✕</button>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+        </aside>
+
+        <!-- Główny obszar roboczy (Main), na starcie pusty -->
+        <main class="main-content" id="main-content">
+            <!-- Tutaj dynamicznie będą wskakiwać split-screeny lub aktywne aplikacje -->
+            <div class="empty-state">
+                <p>Wybierz lub stwórz nowy element z menu bocznego, aby rozpocząć pracę.</p>
+            </div>
+        </main>
     </div>
+</body>
 
     <script>
         // Place for connecting your Socket.io / WebSocket backend logic
