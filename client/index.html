@@ -100,20 +100,58 @@
         </div>
     </div>
 
-    <script>
-        // Place for connecting your Socket.io / WebSocket backend logic
-        const leftEditor = document.getElementById('left-editor');
-        const rightEditor = document.getElementById('right-editor');
+    <!-- Dołączenie biblioteki Socket.io z serwera Node.js -->
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    // Połączenie z serwerem Socket.io (automatycznie wykrywa ten sam adres/IP)
+    const socket = io();
 
-        leftEditor.addEventListener('input', (e) => {
-            console.log('Left editor changed:', e.target.value);
-            // Backend emit will go here later
-        });
+    const leftEditor = document.getElementById('left-editor');
+    const rightEditor = document.getElementById('right-editor');
+    const leftStatus = document.getElementById('left-status');
+    const rightStatus = document.getElementById('right-status');
 
-        rightEditor.addEventListener('input', (e) => {
-            console.log('Right editor changed:', e.target.value);
-            // Backend emit will go here later
-        });
-    </script>
+    // 1. Odbieranie stanu początkowego po połączeniu
+    socket.on('init-document', (documents) => {
+        leftEditor.value = documents.left;
+        rightEditor.value = documents.right;
+    });
+
+    // 2. Wysyłanie zmian z lewego edytora
+    leftEditor.addEventListener('input', (e) => {
+        const content = e.target.value;
+        socket.emit('text-change', { panel: 'left', content });
+    });
+
+    // 3. Wysyłanie zmian z prawego edytora
+    rightEditor.addEventListener('input', (e) => {
+        const content = e.target.value;
+        socket.emit('text-change', { panel: 'right', content });
+    });
+
+    // 4. Odbieranie zmian od innych użytkowników w czasie rzeczywistym
+    socket.on('text-change', ({ panel, content }) => {
+        if (panel === 'left' && leftEditor.value !== content) {
+            leftEditor.value = content;
+        } else if (panel === 'right' && rightEditor.value !== content) {
+            rightEditor.value = content;
+        }
+    });
+
+    // Status połączenia
+    socket.on('connect', () => {
+        leftStatus.textContent = 'Connected (LAN)';
+        rightStatus.textContent = 'Connected (LAN)';
+        leftStatus.style.color = '#4ec9b0';
+        rightStatus.style.color = '#4ec9b0';
+    });
+
+    socket.on('disconnect', () => {
+        leftStatus.textContent = 'Disconnected';
+        rightStatus.textContent = 'Disconnected';
+        leftStatus.style.color = '#f14c4c';
+        rightStatus.style.color = '#f14c4c';
+    });
+</script>
 </body>
 </html>
