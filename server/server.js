@@ -2,9 +2,12 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const path = require('path'); // <-- 1. Dodaj ten import na górze
 
 const app = express();
 app.use(cors());
+
+app.use(express.static(path.join(__dirname, '../client')));
 
 const server = http.createServer(app);
 const io = new Server(server, {
