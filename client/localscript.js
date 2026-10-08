@@ -28,6 +28,7 @@ if (socket) {
                 Math.min(selectionStart, content.length),
                 Math.min(selectionEnd, content.length)
             );
+            textarea.refreshHighlighting();
         });
     });
 
@@ -673,16 +674,15 @@ function initHighlighting(pane, textarea) {
     wrapper.appendChild(highlightDiv);
     wrapper.appendChild(textarea);
 
-    textarea.addEventListener('input', () => {
-        applySyntaxHighlighting(textarea, highlightDiv);
-    });
+    textarea.refreshHighlighting = () => applySyntaxHighlighting(textarea, highlightDiv);
+    textarea.addEventListener('input', textarea.refreshHighlighting);
 
     textarea.addEventListener('scroll', () => {
         highlightDiv.scrollTop = textarea.scrollTop;
         highlightDiv.scrollLeft = textarea.scrollLeft;
     });
 
-    applySyntaxHighlighting(textarea, highlightDiv);
+    textarea.refreshHighlighting();
 }
 
 //----------------------------------------------------------------------------------------//
