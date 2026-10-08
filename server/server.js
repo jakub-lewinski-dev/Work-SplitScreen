@@ -23,12 +23,28 @@ let documents = {
   left: "",
   right: ""
 };
+const files = new Set();
 
 io.on('connection', (socket) => {
   console.log(`New client connected: ${socket.id}`);
 
   // Send current document state to the newly connected client
   socket.emit('init-document', documents);
+  socket.emit('files-state', Array.from(files));
+
+  socket.on('open-file', (requestedName, acknowledge) => {
+    let fileName = requestedName;
+    let suffix = 2;
+
+    while (files.has(fileName)) {
+      fileName = `${requestedName} (${suffix})`;
+      suffix++;
+    }
+
+    files.add(fileName);
+    socket.broadcast.emit('file-added', fileName);
+    if (typeof acknowledge === 'function') acknowledge(fileName);
+  });
 
   // Listen for text changes from any client
   socket.on('text-change', ({ panel, content }) => {

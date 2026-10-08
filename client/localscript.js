@@ -3,6 +3,15 @@
 //----------------------------------------------------------------------------------------//
 const fileContents = {};
 let fileCounter = 1;
+const socket = typeof io === 'function' ? io() : null;
+
+if (socket) {
+    socket.on('files-state', (fileNames) => {
+        fileNames.forEach(addSyncedFile);
+    });
+
+    socket.on('file-added', addSyncedFile);
+}
 
 // layoutTree może być:
 // 1. null - pusty ekran
@@ -30,33 +39,52 @@ window.addEventListener('click', (e) => {
 // TWORZENIE NOWEGO PLIKU (LISTA BOCZNA)
 //----------------------------------------------------------------------------------------//
 function createTextEditorFile() {
-    const fileName = `Notatka_${fileCounter}`;
+    const requestedName = `Notatka_${fileCounter}`;
     fileCounter++;
-    fileContents[fileName] = "";
 
-    addOpenFile(fileName);
+    const openFile = (fileName) => {
+        if (!fileContents.hasOwnProperty(fileName)) fileContents[fileName] = "";
+        addOpenFile(fileName);
+    };
+
+    if (socket) {
+        socket.emit('open-file', requestedName, openFile);
+    } else {
+        openFile(requestedName);
+    }
 
     const menu = document.getElementById('new-item-menu');
     if (menu) menu.classList.remove('show');
 }
 
+function addSyncedFile(fileName) {
+    if (!fileContents.hasOwnProperty(fileName)) fileContents[fileName] = "";
+    addOpenFile(fileName);
+}
+
 function addOpenFile(fileName) {
     const filesList = document.getElementById('files-list');
     if (!filesList) return;
+    if (Array.from(filesList.children).some((item) => item.dataset.filename === fileName)) return;
 
     const li = document.createElement('li');
     li.className = 'file-item';
     li.dataset.filename = fileName;
     li.draggable = true;
-    
-    li.innerHTML = `
-        <span class="file-name" title="Kliknij dwukrotnie, aby zmienić nazwę">${fileName}</span>
-        <div class="file-actions">
-            <button class="rename-file" title="Zmień nazwę">✏️</button>
-            <button class="save-file" title="Zapisz na dysku">💾</button>
-            <button class="close-file" title="Zamknij z listy">✕</button>
-        </div>
+
+    const name = document.createElement('span');
+    name.className = 'file-name';
+    name.title = 'Kliknij dwukrotnie, aby zmienić nazwę';
+    name.textContent = fileName;
+
+    const actions = document.createElement('div');
+    actions.className = 'file-actions';
+    actions.innerHTML = `
+        <button class="rename-file" title="Zmień nazwę">✏️</button>
+        <button class="save-file" title="Zapisz na dysku">💾</button>
+        <button class="close-file" title="Zamknij z listy">✕</button>
     `;
+    li.append(name, actions);
     
     li.addEventListener('dragstart', (e) => {
         // Blokada przeciągania podczas zmiany nazwy pliku
