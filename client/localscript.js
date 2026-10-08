@@ -1,159 +1,117 @@
+// Połączenie z serwerem Socket.io
+const socket = io();
+
 //----------------------------------------------------------------------------------------//
-// STAN APLIKACJI I DRZEWO UKŁADU
+// STAN APLIKACJI I LICZNIKI
 //----------------------------------------------------------------------------------------//
-const fileContents = {};
+let fileContents = {};
 let fileCounter = 1;
-let layoutTree = null;
 
-// Inicjalizacja Socket.io (jeśli biblioteka jest dołączona w HTML)
-const socket = typeof io === 'function' ? io() : null;
+// Aktywne pliki w split-screenie (lewy i prawy)
+let splitState = {
+    left: null,   // nazwa pliku po lewej
+    right: null   // nazwa pliku po prawej
+};
 
-if (socket) {
-    socket.on('files-state', (fileNames) => {
-        fileNames.forEach(({ fileName, content }) => addSyncedFile(fileName, content));
-    });
-
-    socket.on('file-added', ({ fileName, content }) => addSyncedFile(fileName, content));
-
-    socket.on('file-content-change', ({ fileName, content }) => {
-        fileContents[fileName] = content;
-
-        document.querySelectorAll('.pane-textarea').forEach((textarea) => {
-            if (textarea.dataset.filename !== fileName) return;
-
-            const selectionStart = textarea.selectionStart;
-            const selectionEnd = textarea.selectionEnd;
-            textarea.value = content;
-            textarea.setSelectionRange(
-                Math.min(selectionStart, content.length),
-                Math.min(selectionEnd, content.length)
-            );
-        });
-    });
-
-    socket.on('file-renamed', ({ oldName, newName }) => {
-        applyFileRename(oldName, newName);
-    });
-
-    socket.on('file-deleted', removeFileEverywhere);
-}
+// Śledzimy, w którym panelu użytkownik ostatnio pracował ('left' lub 'right')
+let activePane = 'left';
 
 //----------------------------------------------------------------------------------------//
-// ROZWIJANIE MENU NOWEGO ELEMENTU ORAZ PODPIĘCIE PRZYCISKÓW
+// SYNCHRONIZACJA SOCKET.IO (ODBIERANIE DANYCH Z SERWERA)
+//----------------------------------------------------------------------------------------//
+socket.on('init-document', (serverDocuments) => {
+    // Pobieramy stan dokumentów z serwera przy połączeniu
+    fileContents = serverDocuments;
+    
+    // Jeśli pliki istnieją, odświeżamy listę i workspace
+    const filesList = document.getElementById('files-list');
+    if (filesList) filesList.innerHTML = '';
+    
+    for (const fileName in fileContents) {
+        addOpenFile(fileName, false); // false, żeby nie emitować ponownego tworzenia
+    }
+    renderWorkspace();
+});
+
+// Nasłuchiwanie zmian tekstu od innych użytkowników w sieci LAN
+socket.on('text-change', ({ panel, content }) => {
+    const fileName = splitState[panel];
+    if (fileName) {
+        fileContents[fileName] = content;
+        // Znajdź odpowiedni textarea w panelu i zaktualizuj tekst, jeśli różni się od obecnego
+        const paneElement = document.querySelector(`.editor-pane[data-pane="${panel}"]`);
+        if (paneElement) {
+            const textarea = paneElement.querySelector('.pane-textarea');
+            if (textarea && textarea.value !== content) {
+                textarea.value = content;
+            }
+        }
+    }
+});
+
+//----------------------------------------------------------------------------------------//
+// ROZWIJANIE MENU NOWEGO ELEMENTU
 //----------------------------------------------------------------------------------------//
 function toggleNewItemMenu() {
     const menu = document.getElementById('new-item-menu');
     if (menu) menu.classList.toggle('show');
 }
 
+// Zamykanie menu po kliknięciu w dowolne miejsce poza nim
 window.addEventListener('click', (e) => {
     const btn = document.getElementById('new-item-btn');
     const menu = document.getElementById('new-item-menu');
+    
     if (btn && menu && !btn.contains(e.target) && !menu.contains(e.target)) {
         menu.classList.remove('show');
     }
 });
 
-// Automatyczne podpięcie zdarzenia do przycisku tworzenia pliku w menu
-document.addEventListener('DOMContentLoaded', () => {
-    const createTextFileBtn = document.getElementById('create-text-file-btn');
-    if (createTextFileBtn) {
-        createTextFileBtn.addEventListener('click', () => {
-            createTextEditorFile();
-        });
-    }
-});
-
 //----------------------------------------------------------------------------------------//
-// TWORZENIE NOWEGO PLIKU (LISTA BOCZNA)
+// TWORZENIE NOWEGO PLIKU TEKSTOWEGO
 //----------------------------------------------------------------------------------------//
 function createTextEditorFile() {
     const fileName = `Notatka_${fileCounter}.txt`;
     fileCounter++;
     fileContents[fileName] = "";
 
-    const openFile = (name) => {
-        if (!fileContents.hasOwnProperty(name)) fileContents[name] = "";
-        addOpenFile(name);
-    };
-
-    if (socket) {
-        socket.emit('open-file', fileName, openFile);
-    } else {
-        openFile(fileName);
+    addOpenFile(fileName);
+    
+    // Jeśli nic nie jest otwarte, otwórz automatycznie w aktywnym panelu
+    if (!splitState.left && !splitState.right) {
+        openFileInPane(fileName, activePane);
     }
 
     const menu = document.getElementById('new-item-menu');
     if (menu) menu.classList.remove('show');
 }
 
-function addSyncedFile(fileName, content = '') {
-    if (!fileContents.hasOwnProperty(fileName)) fileContents[fileName] = content;
-    addOpenFile(fileName);
-}
-
-function applyFileRename(oldName, newName) {
-    if (!fileContents.hasOwnProperty(oldName)) return;
-
-    fileContents[newName] = fileContents[oldName];
-    delete fileContents[oldName];
-
-    const fileItem = Array.from(document.querySelectorAll('.file-item'))
-        .find((item) => item.dataset.filename === oldName);
-    if (fileItem) {
-        fileItem.dataset.filename = newName;
-        fileItem.querySelector('.file-name').textContent = newName;
-    }
-
-    function renameInTree(node) {
-        if (!node) return;
-        if (node.type === 'leaf' && node.content === oldName) {
-            node.content = newName;
-        } else if (node.type === 'container') {
-            node.children.forEach(renameInTree);
-        }
-    }
-
-    renameInTree(layoutTree);
-    renderWorkspace();
-}
-
-function removeFileEverywhere(fileName) {
-    delete fileContents[fileName];
-    removeFileFromLayout(fileName);
-
-    const fileItem = Array.from(document.querySelectorAll('.file-item'))
-        .find((item) => item.dataset.filename === fileName);
-    if (fileItem) fileItem.remove();
-
-    renderWorkspace();
-}
-
+//----------------------------------------------------------------------------------------//
+// ZARZĄDZANIE LISTĄ BOCZNĄ I DRAG & DROP
+//----------------------------------------------------------------------------------------//
 function addOpenFile(fileName) {
     const filesList = document.getElementById('files-list');
     if (!filesList) return;
-    if (Array.from(filesList.children).some((item) => item.dataset.filename === fileName)) return;
+
+    // Sprawdź czy plik już jest na liście, żeby nie duplikować
+    if (filesList.querySelector(`[data-filename="${fileName}"]`)) return;
 
     const li = document.createElement('li');
     li.className = 'file-item';
     li.dataset.filename = fileName;
     li.draggable = true;
-
+    
     li.innerHTML = `
-        <span class="file-name" title="Kliknij dwukrotnie, aby zmienić nazwę">${fileName}</span>
+        <span class="file-name">${fileName}</span>
         <div class="file-actions">
-            <button class="rename-file" title="Zmień nazwę">✏️</button>
             <button class="save-file" title="Zapisz na dysku">💾</button>
-            <button class="close-file" title="Zamknij z listy">✕</button>
+            <button class="close-file" title="Zamknij">✕</button>
         </div>
     `;
     
+    // Obsługa przeciągania pliku z listy
     li.addEventListener('dragstart', (e) => {
-        if (li.querySelector('.file-name').isContentEditable) {
-            e.preventDefault();
-            return;
-        }
-        e.dataTransfer.setData('text/plain', li.dataset.filename);
+        e.dataTransfer.setData('text/plain', fileName);
     });
 
     filesList.appendChild(li);
@@ -161,306 +119,120 @@ function addOpenFile(fileName) {
 }
 
 //----------------------------------------------------------------------------------------//
-// LOGIKA ZARZĄDZANIA DRZEWEM I LIMITAMI SIATKI (MAX 2x2)
+// OBSŁUGA WORKSPACE I SPLIT-SCREENA
 //----------------------------------------------------------------------------------------//
-function findNodeAndParent(tree, fileName, parent = null, childIndex = -1) {
-    if (!tree) return null;
-    
-    if (tree.type === 'leaf' && tree.content === fileName) {
-        return { node: tree, parent, childIndex };
-    }
-    
-    if (tree.type === 'container') {
-        for (let i = 0; i < tree.children.length; i++) {
-            const result = findNodeAndParent(tree.children[i], fileName, tree, i);
-            if (result) return result;
-        }
-    }
-    
-    return null;
-}
-
-function canSplit(targetFileName, position) {
-    if (!layoutTree) return false;
-    if (layoutTree.type === 'leaf') return true;
-
-    const found = findNodeAndParent(layoutTree, targetFileName);
-    if (!found) return false;
-    const { parent } = found;
-
-    if (layoutTree.direction === 'row') {
-        if (position === 'left' || position === 'right') return false;
-        if (position === 'top' || position === 'bottom') return parent === layoutTree;
-    }
-
-    if (layoutTree.direction === 'column') {
-        if (position === 'top' || position === 'bottom') return false;
-        if (position === 'left' || position === 'right') return parent === layoutTree;
-    }
-
-    return false;
-}
-
-function removeFileFromLayout(fileName) {
-    const found = findNodeAndParent(layoutTree, fileName);
-    if (!found) return;
-
-    const { node, parent, childIndex } = found;
-
-    if (!parent) {
-        layoutTree = null;
-    } else {
-        const siblingIndex = childIndex === 0 ? 1 : 0;
-        const siblingNode = parent.children[siblingIndex];
-
-        parent.type = siblingNode.type;
-        parent.content = siblingNode.content;
-        parent.direction = siblingNode.direction;
-        parent.children = siblingNode.children;
-        parent.splitRatio = 0.5;
-    }
-}
-
-function handleDropOnPane(targetFileName, draggedFileName, position) {
-    if (targetFileName === draggedFileName) return;
-
-    removeFileFromLayout(draggedFileName);
-
-    const found = findNodeAndParent(layoutTree, targetFileName);
-    if (!found) return;
-
-    const { node } = found;
-
-    if (position === 'center') {
-        node.content = draggedFileName;
-    } else {
-        if (!canSplit(targetFileName, position)) return;
-
-        const originalContent = node.content;
-        node.type = 'container';
-        node.content = null;
-        node.splitRatio = 0.5;
-
-        const draggedLeaf = { type: 'leaf', content: draggedFileName };
-        const originalLeaf = { type: 'leaf', content: originalContent };
-
-        if (position === 'left') {
-            node.direction = 'row';
-            node.children = [draggedLeaf, originalLeaf];
-        } else if (position === 'right') {
-            node.direction = 'row';
-            node.children = [originalLeaf, draggedLeaf];
-        } else if (position === 'top') {
-            node.direction = 'column';
-            node.children = [draggedLeaf, originalLeaf];
-        } else if (position === 'bottom') {
-            node.direction = 'column';
-            node.children = [originalLeaf, draggedLeaf];
-        }
-    }
-
+function openFileInPane(fileName, paneSide) {
+    splitState[paneSide] = fileName;
     renderWorkspace();
 }
 
-//----------------------------------------------------------------------------------------//
-// RENDEROWANIE OBSZARU ROBOCZEGO Z SUWAKAMI
-//----------------------------------------------------------------------------------------//
 function renderWorkspace() {
     const mainContent = document.getElementById('main-content');
     if (!mainContent) return;
 
     mainContent.innerHTML = '';
 
-    if (!layoutTree) {
+    const { left, right } = splitState;
+
+    // Przypadek 1: Pusto
+    if (!left && !right) {
         mainContent.innerHTML = `
-            <div class="empty-state" style="margin: auto; color: #8e9297; text-align: center; height: 100%; display: flex; align-items: center; justify-content: center;">
-                <p>Przeciągnij plik z bocznej listy na ekran, aby rozpocząć pracę.</p>
+            <div class="empty-state" style="margin: auto; color: #8e9297;">
+                <p>Przeciągnij plik z bocznej listy na ekran lub wybierz go, aby rozpocząć pracę.</p>
             </div>
         `;
         updateActiveHighlights();
         return;
     }
 
-    const workspaceElement = renderNode(layoutTree);
-    mainContent.appendChild(workspaceElement);
+    // Przypadek 2: Tylko lewy panel
+    if (left && !right) {
+        mainContent.appendChild(createPaneElement(left, 'left'));
+    } 
+    // Przypadek 3: Tylko prawy panel
+    else if (!left && right) {
+        mainContent.appendChild(createPaneElement(right, 'right'));
+    } 
+    // Przypadek 4: Split-screen (oba aktywne)
+    else {
+        mainContent.appendChild(createPaneElement(left, 'left'));
+        mainContent.appendChild(createPaneElement(right, 'right'));
+    }
+
     updateActiveHighlights();
 }
 
-function renderNode(node) {
-    if (node.type === 'leaf') {
-        return createPaneElement(node.content);
-    }
-
-    if (node.type === 'container') {
-        const container = document.createElement('div');
-        container.style.display = 'flex';
-        container.style.flex = '1';
-        container.style.width = '100%';
-        container.style.height = '100%';
-        container.style.position = 'relative';
-        container.style.overflow = 'hidden';
-        
-        const isRow = node.direction === 'row';
-        container.style.flexDirection = isRow ? 'row' : 'column';
-
-        if (node.splitRatio === undefined) node.splitRatio = 0.5;
-
-        const child1El = renderNode(node.children[0]);
-        const child2El = renderNode(node.children[1]);
-
-        const p1 = (node.splitRatio * 100).toFixed(2) + '%';
-        const p2 = ((1 - node.splitRatio) * 100).toFixed(2) + '%';
-
-        child1El.style.flex = `0 0 ${p1}`;
-        child2El.style.flex = `0 0 ${p2}`;
-
-        const splitter = document.createElement('div');
-        splitter.className = 'workspace-splitter';
-        splitter.style.zIndex = '10';
-        
-        if (isRow) {
-            splitter.style.width = '8px';
-            splitter.style.height = '100%';
-            splitter.style.cursor = 'col-resize';
-            splitter.style.marginLeft = '-4px';
-            splitter.style.marginRight = '-4px';
-        } else {
-            splitter.style.width = '100%';
-            splitter.style.height = '8px';
-            splitter.style.cursor = 'row-resize';
-            splitter.style.marginTop = '-4px';
-            splitter.style.marginBottom = '-4px';
-        }
-
-        splitter.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-
-            const rect = container.getBoundingClientRect();
-            const totalWidth = rect.width;
-            const totalHeight = rect.height;
-
-            function onMouseMove(moveEvent) {
-                let newRatio = node.splitRatio;
-
-                if (isRow) {
-                    let currentX = moveEvent.clientX - rect.left;
-                    newRatio = currentX / totalWidth;
-                } else {
-                    let currentY = moveEvent.clientY - rect.top;
-                    newRatio = currentY / totalHeight;
-                }
-
-                if (newRatio < 0.15) newRatio = 0.15;
-                if (newRatio > 0.85) newRatio = 0.85;
-
-                node.splitRatio = newRatio;
-
-                const newP1 = (node.splitRatio * 100).toFixed(2) + '%';
-                const newP2 = ((1 - node.splitRatio) * 100).toFixed(2) + '%';
-                child1El.style.flex = `0 0 ${newP1}`;
-                child2El.style.flex = `0 0 ${newP2}`;
-            }
-
-            function onMouseUp() {
-                window.removeEventListener('mousemove', onMouseMove);
-                window.removeEventListener('mouseup', onMouseUp);
-            }
-
-            window.addEventListener('mousemove', onMouseMove);
-            window.addEventListener('mouseup', onMouseUp);
-        });
-
-        container.appendChild(child1El);
-        container.appendChild(splitter);
-        container.appendChild(child2El);
-
-        return container;
-    }
-}
-
-//----------------------------------------------------------------------------------------//
-// TWORZENIE PANELU EDYTORA
-//----------------------------------------------------------------------------------------//
-function createPaneElement(fileName) {
+// Tworzenie pojedynczego panelu edytora
+function createPaneElement(fileName, paneSide) {
     const pane = document.createElement('div');
     pane.className = 'editor-pane';
-    pane.style.display = 'flex';
-    pane.style.flexDirection = 'column';
-    pane.style.height = '100%';
-    pane.style.border = '1px solid #202225';
-    pane.style.overflow = 'hidden';
-    pane.style.boxSizing = 'border-box';
+    pane.dataset.pane = paneSide; // Przydatne do wyszukiwania panelu przy synchronizacji
     
     pane.innerHTML = `
         <div class="editor-top-bar" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; background-color: #2f3136; border-bottom: 1px solid #202225; font-size: 14px; font-weight: bold; color: #dcddde;">
-            <span>🗂️ ${fileName}</span>
-            <div style="display: flex; gap: 6px; align-items: center;">
-                <button class="maximize-pane-btn" title="Ustaw na pełny ekran" style="background: transparent; border: none; color: #8e9297; cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: 4px;">▢</button>
-                <button class="close-pane-btn" title="Zamknij ten panel" style="background: transparent; border: none; color: #8e9297; cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 4px;">✕</button>
-            </div>
+            <span>🗂️ ${fileName} (${paneSide.toUpperCase()})</span>
+            <button class="close-pane-btn" title="Zamknij ten panel" style="background: transparent; border: none; color: #8e9297; cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 4px;">✕</button>
         </div>
-        <textarea class="pane-textarea" spellcheck="false"></textarea>
+        <textarea class="pane-textarea" style="flex: 1; background-color: #36393f; color: #dcddde; border: none; padding: 16px; font-size: 15px; font-family: monospace; resize: none; outline: none;"></textarea>
     `;
 
     const textarea = pane.querySelector('.pane-textarea');
-    textarea.dataset.filename = fileName;
     textarea.value = fileContents[fileName] || "";
 
-    initHighlighting(pane, textarea);
-
+    // Zapis tekstu w locie i wysyłanie przez Socket.io do drugiego komputera
     textarea.addEventListener('input', (e) => {
-        fileContents[fileName] = e.target.value;
-        if (socket) socket.emit('file-content-change', { fileName, content: e.target.value });
+        const content = e.target.value;
+        fileContents[fileName] = content;
+        
+        // Wysyłamy zmianę na serwer przypisując ją do odpowiedniej strony (left/right)
+        socket.emit('text-change', { panel: paneSide, content: content });
     });
 
-    pane.querySelector('.maximize-pane-btn').addEventListener('click', () => {
-        layoutTree = { type: 'leaf', content: fileName };
-        renderWorkspace();
-    });
+    // Śledzenie aktywnego panelu
+    pane.addEventListener('mousedown', () => { activePane = paneSide; });
+    textarea.addEventListener('focus', () => { activePane = paneSide; });
 
+    // Przycisk X w nagłówku panelu (zamyka ten konkretny panel split)
     pane.querySelector('.close-pane-btn').addEventListener('click', () => {
-        removeFileFromLayout(fileName);
+        splitState[paneSide] = null;
         renderWorkspace();
     });
 
+    // Obsługa upuszczania (Drag & Drop) na krawędzie/połówki
     pane.addEventListener('dragover', (e) => e.preventDefault());
     pane.addEventListener('drop', (e) => {
         e.preventDefault();
-        e.stopPropagation();
-
         const draggedFileName = e.dataTransfer.getData('text/plain');
         if (!draggedFileName) return;
-
+        
         const rect = pane.getBoundingClientRect();
         const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        const w = rect.width;
-        const h = rect.height;
-
-        const edgeRatio = 0.25; 
-        let position = 'center';
         
-        if (x < w * edgeRatio) position = 'left';
-        else if (x > w * (1 - edgeRatio)) position = 'right';
-        else if (y < h * edgeRatio) position = 'top';
-        else if (y > h * (1 - edgeRatio)) position = 'bottom';
-
-        handleDropOnPane(fileName, draggedFileName, position);
+        if (x < rect.width / 2) {
+            splitState[paneSide] = draggedFileName;
+        } else {
+            if (paneSide === 'left') {
+                splitState.right = draggedFileName;
+            } else {
+                splitState[paneSide] = draggedFileName;
+            }
+        }
+        renderWorkspace();
     });
 
     return pane;
 }
 
+// Globalny Drop na pustym tle
 const mainContentEl = document.getElementById('main-content');
 if (mainContentEl) {
     mainContentEl.addEventListener('dragover', (e) => e.preventDefault());
     mainContentEl.addEventListener('drop', (e) => {
         e.preventDefault();
-        if (!layoutTree) {
+        if (!splitState.left && !splitState.right) {
             const draggedFileName = e.dataTransfer.getData('text/plain');
             if (draggedFileName) {
-                layoutTree = { type: 'leaf', content: draggedFileName };
-                renderWorkspace();
+                openFileInPane(draggedFileName, 'left');
             }
         }
     });
@@ -471,254 +243,44 @@ if (mainContentEl) {
 //----------------------------------------------------------------------------------------//
 const filesListEl = document.getElementById('files-list');
 if (filesListEl) {
-    filesListEl.addEventListener('dblclick', (e) => {
-        if (e.target.classList.contains('file-name')) {
-            const fileItem = e.target.closest('.file-item');
-            startRenaming(fileItem);
-        }
-    });
-
     filesListEl.addEventListener('click', (e) => {
-        if (e.target.isContentEditable) return;
-
         const fileItem = e.target.closest('.file-item');
         if (!fileItem) return;
 
         const fileName = fileItem.dataset.filename;
 
-        if (e.target.classList.contains('rename-file') || e.target.closest('.rename-file')) {
-            startRenaming(fileItem);
-            return;
-        }
-
-        if (e.target.classList.contains('save-file') || e.target.closest('.save-file')) {
-            saveFileToDisk(fileName);
-            return;
-        }
-
+        // Jeśli kliknięto krzyżyk zamykania na liście bocznej (usuwa plik całkowicie)
         if (e.target.classList.contains('close-file') || e.target.closest('.close-file')) {
             delete fileContents[fileName];
-            removeFileFromLayout(fileName);
+            if (splitState.left === fileName) splitState.left = null;
+            if (splitState.right === fileName) splitState.right = null;
             fileItem.remove();
             renderWorkspace();
-            
-            // Wysyłamy informację do serwera, aby usunąć plik u wszystkich
-            if (socket) {
-                socket.emit('delete-file', fileName);
-            }
             return;
         }
+
+        let targetPane = activePane;
+
+        if (splitState.left && !splitState.right && splitState.left !== fileName) {
+            targetPane = 'right';
+        } else if (!splitState.left && splitState.right && splitState.right !== fileName) {
+            targetPane = 'left';
+        }
+
+        openFileInPane(fileName, targetPane);   
     });
 }
 
-function startRenaming(fileItem) {
-    const nameSpan = fileItem.querySelector('.file-name');
-    const oldName = fileItem.dataset.filename;
-    
-    if (nameSpan.isContentEditable) return;
-
-    nameSpan.contentEditable = true;
-    nameSpan.focus();
-    
-    const range = document.createRange();
-    range.selectNodeContents(nameSpan);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
-
-    function onKeyDown(e) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            nameSpan.blur();
-        } else if (e.key === 'Escape') {
-            cancelRenaming();
-        }
-    }
-
-    function finishRenaming() {
-        cleanup();
-        const newName = nameSpan.textContent.trim();
-        
-        if (newName && newName !== oldName) {
-            if (fileContents.hasOwnProperty(newName)) {
-                alert('Plik o takiej nazwie już istnieje!');
-                nameSpan.textContent = oldName;
-            } else {
-                fileContents[newName] = fileContents[oldName];
-                delete fileContents[oldName];
-
-                fileItem.dataset.filename = newName;
-
-                function renameInTree(node) {
-                    if (!node) return;
-                    if (node.type === 'leaf' && node.content === oldName) {
-                        node.content = newName;
-                    } else if (node.type === 'container') {
-                        renameInTree(node.children[0]);
-                        renameInTree(node.children[1]);
-                    }
-                }
-                renameInTree(layoutTree);
-                
-                renderWorkspace();
-            }
-        } else {
-            nameSpan.textContent = oldName;
-        }
-    }
-
-    function cancelRenaming() {
-        cleanup();
-        nameSpan.textContent = oldName;
-    }
-
-    function cleanup() {
-        nameSpan.contentEditable = false;
-        nameSpan.removeEventListener('keydown', onKeyDown);
-        nameSpan.removeEventListener('blur', finishRenaming);
-        window.getSelection().removeAllRanges();
-    }
-
-    nameSpan.addEventListener('keydown', onKeyDown);
-    nameSpan.addEventListener('blur', finishRenaming);
-}
-
+//----------------------------------------------------------------------------------------//
+// PODŚWIETLANIE AKTYWNYCH PLIKÓW NA LIŚCIE
+//----------------------------------------------------------------------------------------//
 function updateActiveHighlights() {
-    function getActiveFiles(node, set = new Set()) {
-        if (!node) return set;
-        if (node.type === 'leaf') set.add(node.content);
-        if (node.type === 'container') {
-            getActiveFiles(node.children[0], set);
-            getActiveFiles(node.children[1], set);
-        }
-        return set;
-    }
-
-    const activeFiles = getActiveFiles(layoutTree);
-
     document.querySelectorAll('.file-item').forEach(item => {
         const name = item.dataset.filename;
-        if (activeFiles.has(name)) {
+        if (name === splitState.left || name === splitState.right) {
             item.classList.add('active');
         } else {
             item.classList.remove('active');
         }
     });
-}
-
-//----------------------------------------------------------------------------------------//
-// FUNKCJA PODŚWIETLANJA HASEŁ I SYMBOLI (SYNTAX HIGHLIGHTER)
-//----------------------------------------------------------------------------------------//
-function applySyntaxHighlighting(textarea, highlightDiv) {
-    let text = textarea.value;
-
-    text = text.replace(/&/g, "&amp;")
-               .replace(/</g, "&lt;")
-               .replace(/>/g, "&gt;");
-
-    const keywords = {
-        'function': '#e04a56',
-        'let': '#e04a56',
-        'const': '#e04a56',
-        'false': '#61afef',
-        'true': '#61afef',
-        'return': '#9355a7',
-        'for': '#c678dd',
-        'if': '#c678dd',
-        'while': '#c678dd'
-    };
-
-    const symbols = {
-        '(': '#ffd900',
-        ')': '#ffd900',
-        '{': '#c678dd',
-        '}': '#c678dd',
-        '&lt;': '#61afef',
-        '&gt;': '#61afef',
-        '=': '#61afef'
-    };
-
-    const stringColor = '#61afef';
-
-    const kwKeys = Object.keys(keywords).join('|');
-    const symKeys = Object.keys(symbols).map(s => s.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
-
-    const combinedRegex = new RegExp(`(\\b(?:${kwKeys})\\b)|("[^"]*?")|(${symKeys})`, 'g');
-
-    text = text.replace(combinedRegex, (match, kw, str, sym) => {
-        if (kw) {
-            return `<span style="color: ${keywords[kw]}; font-weight: bold;">${kw}</span>`;
-        }
-        if (str) {
-            return `<span style="color: ${stringColor}; font-weight: bold;">${str}</span>`;
-        }
-        if (sym) {
-            const displaySym = sym === '&lt;' ? '<' : (sym === '&gt;' ? '>' : sym);
-            return `<span style="color: ${symbols[sym]}; font-weight: bold;">${displaySym}</span>`;
-        }
-        return match;
-    });
-
-    highlightDiv.innerHTML = text + '\n';
-}
-
-function initHighlighting(pane, textarea) {
-    const highlightDiv = document.createElement('div');
-    highlightDiv.className = 'code-highlight';
-    
-    const wrapper = document.createElement('div');
-    wrapper.className = 'editor-container';
-    
-    textarea.parentNode.replaceChild(wrapper, textarea);
-    wrapper.appendChild(highlightDiv);
-    wrapper.appendChild(textarea);
-
-    textarea.addEventListener('input', () => {
-        applySyntaxHighlighting(textarea, highlightDiv);
-    });
-
-    textarea.addEventListener('scroll', () => {
-        highlightDiv.scrollTop = textarea.scrollTop;
-        highlightDiv.scrollLeft = textarea.scrollLeft;
-    });
-
-    applySyntaxHighlighting(textarea, highlightDiv);
-}
-
-//----------------------------------------------------------------------------------------//
-// FUNKCJA ZAPISU PLIKU NA DYSK (Natywne okno systemu)
-//----------------------------------------------------------------------------------------//
-async function saveFileToDisk(fileName) {
-    const content = fileContents[fileName] || "";
-
-    if ('showSaveFilePicker' in window) {
-        try {
-            const options = {
-                suggestedName: fileName,
-                types: [{
-                    description: 'Pliki tekstowe',
-                    accept: { 'text/plain': ['.txt', '.js', '.html', '.md'] },
-                }],
-            };
-
-            const handle = await window.showSaveFilePicker(options);
-            const writable = await handle.createWritable();
-            await writable.write(content);
-            await writable.close();
-            return;
-        } catch (err) {
-            if (err.name === 'AbortError') return;
-            console.error("Błąd zapisu przez File System Access:", err);
-        }
-    }
-
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
 }

@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Work SplitScreen - LAN Notepad</title>
-    <link rel="stylesheet" href="style.css"><link>
+    <link rel="stylesheet" href="style.css">
+    <!-- Wymagane do działania synchronizacji w czasie rzeczywistym -->
+    <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
-
-    <body>
     <div class="app-container">
         <!-- Boczny panel (Sidebar / Aside) -->
         <aside class="sidebar" id="sidebar">
@@ -50,12 +50,8 @@
             </div>
         </main>
     </div>
-</body>
-</div>
-</body>
 
-<!-- Dołączenie biblioteki Socket.io -->
-<script src="/socket.io/socket.io.js"></script>
-<script src="localscript.js"></script>
-
+    <!-- Skrypt aplikacji umieszczony poprawnie przed zamknięciem body -->
+    <script src="localscript.js"></script>
+</body>
 </html>
