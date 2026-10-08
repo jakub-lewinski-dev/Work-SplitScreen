@@ -401,6 +401,12 @@ if (filesListEl) {
             return;
         }
 
+        // Obsługa zapisu pliku na pojedyncze kliknięcie ikony dyskietki
+        if (e.target.classList.contains('save-file') || e.target.closest('.save-file')) {
+            saveFileToDisk(fileName);
+            return;
+        }
+
         if (e.target.classList.contains('close-file') || e.target.closest('.close-file')) {
             delete fileContents[fileName];
             removeFileFromLayout(fileName);
@@ -597,4 +603,46 @@ function initHighlighting(pane, textarea) {
 
     // Pierwsze uruchomienie, żeby pokolorować tekst domyślny
     applySyntaxHighlighting(textarea, highlightDiv);
+}
+
+//----------------------------------------------------------------------------------------//
+// FUNKCJA ZAPISU PLIKU NA DYSK (Natywne okno systemu)
+//----------------------------------------------------------------------------------------//
+async function saveFileToDisk(fileName) {
+    const content = fileContents[fileName] || "";
+
+    // Sprawdzenie, czy przeglądarka wspiera nowoczesne API File System Access
+    if ('showSaveFilePicker' in window) {
+        try {
+            const options = {
+                suggestedName: fileName,
+                types: [{
+                    description: 'Pliki tekstowe',
+                    accept: { 'text/plain': ['.txt', '.js', '.html', '.md'] },
+                }],
+            };
+
+            // Otwarcie natywnego okna "Zapisz jako" systemu operacyjnego
+            const handle = await window.showSaveFilePicker(options);
+            const writable = await handle.createWritable();
+            await writable.write(content);
+            await writable.close();
+            return; // Zapis powiódł się
+        } catch (err) {
+            // Jeśli użytkownik anulował okno, nie robimy nic (błąd 'AbortError')
+            if (err.name === 'AbortError') return;
+            console.error("Błąd zapisu przez File System Access:", err);
+        }
+    }
+
+    // Metoda awaryjna dla starszych przeglądarkek (pobieranie przez blob)
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 }
