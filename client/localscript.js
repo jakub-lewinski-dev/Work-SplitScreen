@@ -7,10 +7,32 @@ const socket = typeof io === 'function' ? io() : null;
 
 if (socket) {
     socket.on('files-state', (fileNames) => {
-        fileNames.forEach(addSyncedFile);
+        fileNames.forEach(({ fileName, content }) => addSyncedFile(fileName, content));
     });
 
-    socket.on('file-added', addSyncedFile);
+    socket.on('file-added', ({ fileName, content }) => addSyncedFile(fileName, content));
+
+    socket.on('file-content-change', ({ fileName, content }) => {
+        fileContents[fileName] = content;
+
+        document.querySelectorAll('.pane-textarea').forEach((textarea) => {
+            if (textarea.dataset.filename !== fileName) return;
+
+            const selectionStart = textarea.selectionStart;
+            const selectionEnd = textarea.selectionEnd;
+            textarea.value = content;
+            textarea.setSelectionRange(
+                Math.min(selectionStart, content.length),
+                Math.min(selectionEnd, content.length)
+            );
+        });
+    });
+
+    socket.on('file-renamed', ({ oldName, newName }) => {
+        applyFileRename(oldName, newName);
+    });
+
+    socket.on('file-deleted', removeFileEverywhere);
 }
 
 // layoutTree może być:
@@ -57,9 +79,46 @@ function createTextEditorFile() {
     if (menu) menu.classList.remove('show');
 }
 
-function addSyncedFile(fileName) {
-    if (!fileContents.hasOwnProperty(fileName)) fileContents[fileName] = "";
+function addSyncedFile(fileName, content = '') {
+    if (!fileContents.hasOwnProperty(fileName)) fileContents[fileName] = content;
     addOpenFile(fileName);
+}
+
+function applyFileRename(oldName, newName) {
+    if (!fileContents.hasOwnProperty(oldName)) return;
+
+    fileContents[newName] = fileContents[oldName];
+    delete fileContents[oldName];
+
+    const fileItem = Array.from(document.querySelectorAll('.file-item'))
+        .find((item) => item.dataset.filename === oldName);
+    if (fileItem) {
+        fileItem.dataset.filename = newName;
+        fileItem.querySelector('.file-name').textContent = newName;
+    }
+
+    function renameInTree(node) {
+        if (!node) return;
+        if (node.type === 'leaf' && node.content === oldName) {
+            node.content = newName;
+        } else if (node.type === 'container') {
+            node.children.forEach(renameInTree);
+        }
+    }
+
+    renameInTree(layoutTree);
+    renderWorkspace();
+}
+
+function removeFileEverywhere(fileName) {
+    delete fileContents[fileName];
+    removeFileFromLayout(fileName);
+
+    const fileItem = Array.from(document.querySelectorAll('.file-item'))
+        .find((item) => item.dataset.filename === fileName);
+    if (fileItem) fileItem.remove();
+
+    renderWorkspace();
 }
 
 function addOpenFile(fileName) {
@@ -264,10 +323,12 @@ function createPaneElement(fileName) {
     `;
 
     const textarea = pane.querySelector('.pane-textarea');
+    textarea.dataset.filename = fileName;
     textarea.value = fileContents[fileName] || "";
 
     textarea.addEventListener('input', (e) => {
         fileContents[fileName] = e.target.value;
+        if (socket) socket.emit('file-content-change', { fileName, content: e.target.value });
     });
 
     // Przycisk kwadratu: Resetuje całe drzewo i ustawia ten plik jako jedyny na Kanwie 1 stopnia
@@ -359,10 +420,8 @@ if (filesListEl) {
 
         // --- ZAMYKANIE PLIKU ---
         if (e.target.classList.contains('close-file') || e.target.closest('.close-file')) {
-            delete fileContents[fileName];
-            removeFileFromLayout(fileName); // Zdejmujemy z kanwy jeśli tam jest
-            fileItem.remove();
-            renderWorkspace();
+            removeFileEverywhere(fileName);
+            if (socket) socket.emit('delete-file', fileName);
             return;
         }
 
@@ -406,27 +465,12 @@ function startRenaming(fileItem) {
                 alert('Plik o takiej nazwie już istnieje!');
                 nameSpan.textContent = oldName;
             } else {
-                // 1. Aktualizacja zawartości w bazie obiektowej
-                fileContents[newName] = fileContents[oldName];
-                delete fileContents[oldName];
-
-                // 2. Aktualizacja atrybutu elementu listy
-                fileItem.dataset.filename = newName;
-
-                // 3. Aktualizacja drzewa kanw (szukamy wszystkich wystąpień starej nazwy)
-                function renameInTree(node) {
-                    if (!node) return;
-                    if (node.type === 'leaf' && node.content === oldName) {
-                        node.content = newName;
-                    } else if (node.type === 'container') {
-                        renameInTree(node.children[0]);
-                        renameInTree(node.children[1]);
-                    }
+                applyFileRename(oldName, newName);
+                if (socket) {
+                    socket.emit('rename-file', { oldName, newName }, (accepted) => {
+                        if (!accepted) applyFileRename(newName, oldName);
+                    });
                 }
-                renameInTree(layoutTree);
-                
-                // 4. Odświeżenie interfejsu (nagłówki okien zaktualizują nazwę)
-                renderWorkspace();
             }
         } else {
             // Jeśli ktoś wykasował cały tekst i zatwierdził - przywracamy starą nazwę

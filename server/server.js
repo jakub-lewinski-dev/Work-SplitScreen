@@ -18,19 +18,13 @@ const io = new Server(server, {
   }
 });
 
-// Store documents state in memory
-let documents = {
-  left: "",
-  right: ""
-};
-const files = new Set();
+// Store shared file contents in memory
+const files = new Map();
 
 io.on('connection', (socket) => {
   console.log(`New client connected: ${socket.id}`);
 
-  // Send current document state to the newly connected client
-  socket.emit('init-document', documents);
-  socket.emit('files-state', Array.from(files));
+  socket.emit('files-state', Array.from(files, ([fileName, content]) => ({ fileName, content })));
 
   socket.on('open-file', (requestedName, acknowledge) => {
     let fileName = requestedName;
@@ -41,16 +35,34 @@ io.on('connection', (socket) => {
       suffix++;
     }
 
-    files.add(fileName);
-    socket.broadcast.emit('file-added', fileName);
+    files.set(fileName, '');
+    socket.broadcast.emit('file-added', { fileName, content: '' });
     if (typeof acknowledge === 'function') acknowledge(fileName);
   });
 
-  // Listen for text changes from any client
-  socket.on('text-change', ({ panel, content }) => {
-    documents[panel] = content;
-    // Broadcast changes to all other clients in the LAN
-    socket.broadcast.emit('text-change', { panel, content });
+  socket.on('file-content-change', ({ fileName, content }) => {
+    if (!files.has(fileName) || typeof content !== 'string') return;
+
+    files.set(fileName, content);
+    socket.broadcast.emit('file-content-change', { fileName, content });
+  });
+
+  socket.on('rename-file', ({ oldName, newName }, acknowledge) => {
+    if (!files.has(oldName) || typeof newName !== 'string' || !newName.trim() || files.has(newName)) {
+      if (typeof acknowledge === 'function') acknowledge(false);
+      return;
+    }
+
+    files.set(newName, files.get(oldName));
+    files.delete(oldName);
+    socket.broadcast.emit('file-renamed', { oldName, newName });
+    if (typeof acknowledge === 'function') acknowledge(true);
+  });
+
+  socket.on('delete-file', (fileName) => {
+    if (!files.delete(fileName)) return;
+
+    socket.broadcast.emit('file-deleted', fileName);
   });
 
   socket.on('disconnect', () => {
