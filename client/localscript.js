@@ -1,7 +1,5 @@
 //----------------------------------------------------------------------------------------//
-
 // STAN APLIKACJI I DRZEWO UKŁADU
-
 //----------------------------------------------------------------------------------------//
 
 const fileContents = {};
@@ -12,10 +10,44 @@ let layoutTree = null;
 const mainContentEl = document.getElementById('main-content');
 const filesListEl = document.getElementById('files-list');
 
+// Inicjalizacja Socket.io (jeśli biblioteka jest dołączona w HTML)
+const socket = typeof io === 'function' ? io() : null;
+
+if (socket) {
+    socket.on('files-state', (fileNames) => {
+        fileNames.forEach(({ fileName, content }) => addSyncedFile(fileName, content));
+    });
+
+    socket.on('file-added', ({ fileName, content }) => addSyncedFile(fileName, content));
+
+    socket.on('file-content-change', ({ fileName, content }) => {
+        fileContents[fileName] = content;
+
+        document.querySelectorAll('.pane-textarea').forEach((textarea) => {
+            if (textarea.dataset.filename !== fileName) return;
+
+            const selectionStart = textarea.selectionStart;
+            const selectionEnd = textarea.selectionEnd;
+            textarea.value = content;
+            textarea.setSelectionRange(
+                Math.min(selectionStart, content.length),
+                Math.min(selectionEnd, content.length)
+            );
+            if (typeof textarea.refreshHighlighting === 'function') {
+                textarea.refreshHighlighting();
+            }
+        });
+    });
+
+    socket.on('file-renamed', ({ oldName, newName }) => {
+        applyFileRename(oldName, newName);
+    });
+
+    socket.on('file-deleted', removeFileEverywhere);
+}
+
 //----------------------------------------------------------------------------------------//
-
 // ROZWIJANIE MENU NOWEGO ELEMENTU
-
 //----------------------------------------------------------------------------------------//
 
 function toggleNewItemMenu() {
@@ -31,35 +63,116 @@ window.addEventListener('click', (e) => {
     }
 });
 
+// Automatyczne podpięcie zdarzenia do przycisku tworzenia pliku w menu (jeśli istnieje)
+document.addEventListener('DOMContentLoaded', () => {
+    const createTextFileBtn = document.getElementById('create-text-file-btn');
+    if (createTextFileBtn) {
+        createTextFileBtn.addEventListener('click', () => {
+            createTextEditorFile();
+        });
+    }
+});
+
 //----------------------------------------------------------------------------------------//
-
 // TWORZENIE NOWEGO PLIKU (LISTA BOCZNA)
-
 //----------------------------------------------------------------------------------------//
 
 function createTextEditorFile() {
-    const fileName = `Notatka_${fileCounter}`;
+    const fileName = `Notatka_${fileCounter}.txt`;
     fileCounter++;
-    fileTypes[fileName] = 'text'; // Oznaczamy jako tekst
+    fileTypes[fileName] = 'text';
     fileContents[fileName] = "";
-    addOpenFile(fileName);
+
+    const openFile = (name) => {
+        if (!fileContents.hasOwnProperty(name)) fileContents[name] = "";
+        fileTypes[name] = 'text';
+        addOpenFile(name);
+    };
+
+    if (socket) {
+        socket.emit('open-file', fileName, openFile);
+    } else {
+        openFile(fileName);
+    }
+
     const menu = document.getElementById('new-item-menu');
     if (menu) menu.classList.remove('show');
 }
 
 function createPaintFile() {
-    const fileName = `Rysunek_${paintCounter}`;
+    const fileName = `Rysunek_${paintCounter}.png`;
     paintCounter++;
-    fileTypes[fileName] = 'paint'; // Oznaczamy jako paint
-    fileContents[fileName] = null; // Grafika na razie nie potrzebuje zawartości tekstowej
-    addOpenFile(fileName);
+    fileTypes[fileName] = 'paint';
+    fileContents[fileName] = "";
+
+    const openFile = (name) => {
+        if (!fileContents.hasOwnProperty(name)) fileContents[name] = "";
+        fileTypes[name] = 'paint';
+        addOpenFile(name);
+    };
+
+    if (socket) {
+        socket.emit('open-file', fileName, openFile);
+    } else {
+        openFile(fileName);
+    }
+
     const menu = document.getElementById('new-item-menu');
     if (menu) menu.classList.remove('show');
+}
+
+function addSyncedFile(fileName, content = '') {
+    if (!fileContents.hasOwnProperty(fileName)) fileContents[fileName] = content;
+    // Domyślnie pliki z synchronizacji traktujemy jako tekst, chyba że rozszerzenie wskazuje inaczej
+    fileTypes[fileName] = fileName.endsWith('.png') ? 'paint' : 'text';
+    addOpenFile(fileName);
+}
+
+function applyFileRename(oldName, newName) {
+    if (!fileContents.hasOwnProperty(oldName)) return;
+
+    fileContents[newName] = fileContents[oldName];
+    delete fileContents[oldName];
+
+    fileTypes[newName] = fileTypes[oldName];
+    delete fileTypes[oldName];
+
+    const fileItem = Array.from(document.querySelectorAll('.file-item'))
+        .find((item) => item.dataset.filename === oldName);
+    if (fileItem) {
+        fileItem.dataset.filename = newName;
+        fileItem.querySelector('.file-name').textContent = newName;
+    }
+
+    function renameInTree(node) {
+        if (!node) return;
+        if (node.type === 'leaf' && node.content === oldName) {
+            node.content = newName;
+        } else if (node.type === 'container') {
+            node.children.forEach(renameInTree);
+        }
+    }
+
+    renameInTree(layoutTree);
+    renderWorkspace();
+}
+
+function removeFileEverywhere(fileName) {
+    delete fileContents[fileName];
+    delete fileTypes[fileName];
+    removeFileFromLayout(fileName);
+
+    const fileItem = Array.from(document.querySelectorAll('.file-item'))
+        .find((item) => item.dataset.filename === fileName);
+    if (fileItem) fileItem.remove();
+
+    renderWorkspace();
 }
 
 function addOpenFile(fileName) {
     const filesList = document.getElementById('files-list');
     if (!filesList) return;
+    if (Array.from(filesList.children).some((item) => item.dataset.filename === fileName)) return;
 
     const li = document.createElement('li');
     li.className = 'file-item';
@@ -87,9 +200,7 @@ function addOpenFile(fileName) {
 }
 
 //----------------------------------------------------------------------------------------//
-
 // LOGIKA ZARZĄDZANIA DRZEWEM I LIMITAMI SIATKI (MAX 2x2)
-
 //----------------------------------------------------------------------------------------//
 
 function findNodeAndParent(tree, fileName, parent = null, childIndex = -1) {
@@ -193,9 +304,7 @@ function handleDropOnPane(targetFileName, draggedFileName, position) {
 }
 
 //----------------------------------------------------------------------------------------//
-
 // RENDEROWANIE OBSZARU ROBOCZEGO Z SUWAKAMI
-
 //----------------------------------------------------------------------------------------//
 
 function renderWorkspace() {
@@ -247,16 +356,15 @@ function renderNode(node) {
         child1El.style.flex = `0 0 ${p1}`;
         child2El.style.flex = `0 0 ${p2}`;
 
-        // Tworzenie suwaka (splitter) z widoczną grubością
         const splitter = document.createElement('div');
         splitter.className = 'workspace-splitter';
         splitter.style.zIndex = '10';
 
         if (isRow) {
-            splitter.style.width = '8px'; // grubiej, łatwiej trafić myszką
+            splitter.style.width = '8px';
             splitter.style.height = '100%';
             splitter.style.cursor = 'col-resize';
-            splitter.style.marginLeft = '-4px'; // centrowanie linii granicznej
+            splitter.style.marginLeft = '-4px';
             splitter.style.marginRight = '-4px';
         } else {
             splitter.style.width = '100%';
@@ -266,7 +374,6 @@ function renderNode(node) {
             splitter.style.marginBottom = '-4px';
         }
 
-        // Obsługa przeciąganja suwaka
         splitter.addEventListener('mousedown', (e) => {
             e.preventDefault();
 
@@ -278,7 +385,6 @@ function renderNode(node) {
                 let newRatio = node.splitRatio;
 
                 if (isRow) {
-                    // Obliczamy dokładną pozycję myszki wewnątrz kontenera (od 0 do 1)
                     let currentX = moveEvent.clientX - rect.left;
                     newRatio = currentX / totalWidth;
                 } else {
@@ -286,13 +392,11 @@ function renderNode(node) {
                     newRatio = currentY / totalHeight;
                 }
 
-                // Ograniczenia suwaka (minimum 15% / maksimum 85% dla okna)
                 if (newRatio < 0.15) newRatio = 0.15;
                 if (newRatio > 0.85) newRatio = 0.85;
 
                 node.splitRatio = newRatio;
 
-                // Natychmiastowa aktualizacja rozmiarów
                 const newP1 = (node.splitRatio * 100).toFixed(2) + '%';
                 const newP2 = ((1 - node.splitRatio) * 100).toFixed(2) + '%';
 
@@ -353,20 +457,20 @@ function createPaneElement(fileName) {
         ${innerContent}
     `;
 
-    // --- INICJALIZACJA ODPOWIEDNIEGO KOMPONENTU ---
     if (type === 'text') {
         const textarea = pane.querySelector('.pane-textarea');
+        textarea.dataset.filename = fileName;
         textarea.value = fileContents[fileName] || "";
         initHighlighting(pane, textarea);
 
         textarea.addEventListener('input', (e) => {
             fileContents[fileName] = e.target.value;
+            if (socket) socket.emit('file-content-change', { fileName, content: e.target.value });
         });
     } else if (type === 'paint') {
-        initPaint(pane, fileName); // <--- Wywołanie naszej nowej funkcji dla każdego nowego painta!
+        initPaint(pane, fileName);
     }
 
-    // Pozostałe akcje (maksymalizuj, zamykaj, drag & drop) bez zmian...
     pane.querySelector('.maximize-pane-btn').addEventListener('click', () => {
         layoutTree = { type: 'leaf', content: fileName };
         renderWorkspace();
@@ -422,9 +526,7 @@ if (mainContentEl) {
 }
 
 //----------------------------------------------------------------------------------------//
-
 // OBSŁUGA KLIKNIĘĆ NA LIŚCIE PLIKÓW
-
 //----------------------------------------------------------------------------------------//
 
 if (filesListEl) {
@@ -448,7 +550,6 @@ if (filesListEl) {
             return;
         }
 
-        // Obsługa zapisu pliku na pojedyncze kliknięcie ikony dyskietki
         if (e.target.classList.contains('save-file') || e.target.closest('.save-file')) {
             saveFileToDisk(fileName);
             return;
@@ -460,6 +561,10 @@ if (filesListEl) {
             removeFileFromLayout(fileName);
             fileItem.remove();
             renderWorkspace();
+
+            if (socket) {
+                socket.emit('delete-file', fileName);
+            }
             return;
         }
     });
@@ -500,32 +605,65 @@ function startRenaming(fileItem) {
                 alert('Plik o takiej nazwie już istnieje!');
                 nameSpan.textContent = oldName;
             } else {
-                fileContents[newName] = fileContents[oldName];
-                delete fileContents[oldName];
-
-                fileTypes[newName] = fileTypes[oldName];
-                delete fileTypes[oldName];
-
-                fileItem.dataset.filename = newName;
-
-                function renameInTree(node) {
-                    if (!node) return;
-
-                    if (node.type === 'leaf' && node.content === oldName) {
-                        node.content = newName;
-                    } else if (node.type === 'container') {
-                        renameInTree(node.children[0]);
-                        renameInTree(node.children[1]);
-                    }
+                // Jeśli jesteśmy połączeni z serwerem, wysyłamy żądanie zmiany nazwy
+                if (socket) {
+                    socket.emit('rename-file', { oldName, newName }, (success) => {
+                        if (success) {
+                            // Jeśli serwer zatwierdził zmianę, aktualizujemy stan lokalny
+                            applyFileRenameLocal(oldName, newName);
+                        } else {
+                            alert('Serwer odrzucił zmianę nazwy (plik o tej nazwie już istnieje).');
+                            nameSpan.textContent = oldName;
+                        }
+                    });
+                } else {
+                    // Tryb offline / bez socketa
+                    applyFileRenameLocal(oldName, newName);
                 }
-
-                renameInTree(layoutTree);
-                renderWorkspace();
             }
         } else {
             nameSpan.textContent = oldName;
         }
     }
+
+    function applyFileRenameLocal(oldName, newName) {
+        fileContents[newName] = fileContents[oldName];
+        delete fileContents[oldName];
+
+        fileTypes[newName] = fileTypes[oldName];
+        delete fileTypes[oldName];
+
+        fileItem.dataset.filename = newName;
+
+        function renameInTree(node) {
+            if (!node) return;
+
+            if (node.type === 'leaf' && node.content === oldName) {
+                node.content = newName;
+            } else if (node.type === 'container') {
+                renameInTree(node.children[0]);
+                renameInTree(node.children[1]);
+            }
+        }
+
+        renameInTree(layoutTree);
+        renderWorkspace();
+    }
+
+    function cancelRenaming() {
+        cleanup();
+        nameSpan.textContent = oldName;
+    }
+
+    function cleanup() {
+        nameSpan.contentEditable = false;
+        nameSpan.removeEventListener('keydown', onKeyDown);
+        nameSpan.removeEventListener('blur', finishRenaming);
+        window.getSelection().removeAllRanges();
+    }
+
+    nameSpan.addEventListener('keydown', onKeyDown);
+    nameSpan.addEventListener('blur', finishRenaming);
 
     function cancelRenaming() {
         cleanup();
@@ -570,16 +708,14 @@ function updateActiveHighlights() {
     });
 }
 
-
- //----------------------------------------------------------------------------------------//
- // FUNKCJA ZAPISU PLIKU NA DYSK (Tekst + Paint)
- //----------------------------------------------------------------------------------------//
+//----------------------------------------------------------------------------------------//
+// FUNKCJA ZAPISU PLIKU NA DYSK (Tekst + Paint)
+//----------------------------------------------------------------------------------------//
 
 async function saveFileToDisk(fileName) {
     const content = fileContents[fileName] || "";
     const isPaint = fileTypes[fileName] === 'paint';
 
-    // Ustalenie formatu pliku
     const extension = isPaint ? '.png' : '';
     const suggestedName = isPaint
         ? (fileName.toLowerCase().endsWith('.png') ? fileName : fileName + extension)
@@ -588,17 +724,14 @@ async function saveFileToDisk(fileName) {
     let blob;
 
     if (isPaint) {
-        // Zamiana obrazu Data URL na prawdziwe dane PNG
         const response = await fetch(content);
         blob = await response.blob();
     } else {
-        // Zwykły plik tekstowy
         blob = new Blob([content], {
             type: 'text/plain;charset=utf-8'
         });
     }
 
-    // Sprawdzenie obsługi nowoczesnego API zapisu plików
     if ('showSaveFilePicker' in window) {
         try {
             const options = isPaint
@@ -627,14 +760,12 @@ async function saveFileToDisk(fileName) {
 
             return;
         } catch (err) {
-            // Anulowanie okna zapisu
             if (err.name === 'AbortError') return;
 
             console.error('Błąd zapisu pliku:', err);
         }
     }
 
-    // Zapis awaryjny przez pobieranie pliku
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
 
@@ -655,10 +786,6 @@ async function saveFileToDisk(fileName) {
 function initPaint(pane, fileName) {
     const container = pane.querySelector('.paint-canvas-container');
     if (!container) return;
-
-    //----------------------------------------------------------------------------------------//
-    // TWORZENIE OBSZARU ROBOCZEGO I PASKA NARZĘDZI
-    //----------------------------------------------------------------------------------------//
 
     container.style.position = 'relative';
     container.style.overflow = 'hidden';
@@ -801,10 +928,6 @@ function initPaint(pane, fileName) {
     canvas.width = container.clientWidth || 800;
     canvas.height = container.clientHeight || 600;
 
-    //----------------------------------------------------------------------------------------//
-    // KARTKA I WCZYTYWANIE ZAPISANEGO RYSUNKU
-    //----------------------------------------------------------------------------------------//
-
     const bufferCanvas = document.createElement('canvas');
     bufferCanvas.width = 2000;
     bufferCanvas.height = 1400;
@@ -826,9 +949,28 @@ function initPaint(pane, fileName) {
         savedImage.src = fileContents[fileName];
     }
 
-    //----------------------------------------------------------------------------------------//
-    // USTAWIENIA WIDOKU I NARZĘDZI
-    //----------------------------------------------------------------------------------------//
+    // Natychmiastowa synchronizacja rysunku od innych użytkowników w czasie rzeczywistym
+    if (socket) {
+        const handleRemotePaintChange = ({ fileName: changedFile, content }) => {
+            if (changedFile === fileName && content) {
+                fileContents[fileName] = content;
+                const remoteImage = new Image();
+                remoteImage.onload = () => {
+                    bufferCtx.clearRect(0, 0, bufferCanvas.width, bufferCanvas.height);
+                    bufferCtx.drawImage(remoteImage, 0, 0);
+                    redraw();
+                };
+                remoteImage.src = content;
+            }
+        };
+
+        socket.on('file-content-change', handleRemotePaintChange);
+
+        // Opcjonalne czyszczenie nasłuchiwania przy zamykaniu panelu (zapobiega wyciekom pamięci)
+        pane.querySelector('.close-pane-btn').addEventListener('click', () => {
+            socket.off('file-content-change', handleRemotePaintChange);
+        }, { once: true });
+    }
 
     let scale = 1;
     let offsetX = (canvas.width - bufferCanvas.width) / 2;
@@ -845,10 +987,6 @@ function initPaint(pane, fileName) {
     let brushColor = '#000000';
     let brushSize = 2;
     let activeTool = 'brush';
-
-    //----------------------------------------------------------------------------------------//
-    // AKTUALIZACJA WYGLĄDU NARZĘDZI
-    //----------------------------------------------------------------------------------------//
 
     function updateToolbar() {
         colorButtons.forEach(button => {
@@ -887,7 +1025,11 @@ function initPaint(pane, fileName) {
     }
 
     function saveDrawing() {
-        fileContents[fileName] = bufferCanvas.toDataURL('image/png');
+        const dataUrl = bufferCanvas.toDataURL('image/png');
+        fileContents[fileName] = dataUrl;
+        if (socket) {
+            socket.emit('file-content-change', { fileName, content: dataUrl });
+        }
     }
 
     function redraw() {
@@ -899,10 +1041,6 @@ function initPaint(pane, fileName) {
         ctx.drawImage(bufferCanvas, 0, 0);
         ctx.restore();
     }
-
-    //----------------------------------------------------------------------------------------//
-    // WYBÓR KOLORU
-    //----------------------------------------------------------------------------------------//
 
     colorButtons.forEach(button => {
         button.addEventListener('click', () => {
@@ -918,10 +1056,6 @@ function initPaint(pane, fileName) {
         updateToolbar();
     });
 
-    //----------------------------------------------------------------------------------------//
-    // WYBÓR PĘDZLA I GUMKI
-    //----------------------------------------------------------------------------------------//
-
     brushButton.addEventListener('click', () => {
         activeTool = 'brush';
         updateToolbar();
@@ -931,10 +1065,6 @@ function initPaint(pane, fileName) {
         activeTool = 'eraser';
         updateToolbar();
     });
-
-    //----------------------------------------------------------------------------------------//
-    // ZMIANA ROZMIARU NARZĘDZIA
-    //----------------------------------------------------------------------------------------//
 
     function setBrushSize(size) {
         brushSize = Math.max(1, Math.min(50, size));
@@ -954,10 +1084,6 @@ function initPaint(pane, fileName) {
     });
 
     updateToolbar();
-
-    //----------------------------------------------------------------------------------------//
-    // ZMIANA ROZMIARU WIDOKU
-    //----------------------------------------------------------------------------------------//
 
     const resizeObserver = new ResizeObserver(() => {
         if (!container.clientWidth || !container.clientHeight) return;
@@ -979,17 +1105,9 @@ function initPaint(pane, fileName) {
 
     resizeObserver.observe(container);
 
-    //----------------------------------------------------------------------------------------//
-    // WYŁĄCZENIE MENU KONTEKSTOWEGO
-    //----------------------------------------------------------------------------------------//
-
     canvas.addEventListener('contextmenu', e => {
         e.preventDefault();
     });
-
-    //----------------------------------------------------------------------------------------//
-    // WCISKANIE PRZYCISKÓW MYSZY
-    //----------------------------------------------------------------------------------------//
 
     canvas.addEventListener('mousedown', e => {
         const rect = canvas.getBoundingClientRect();
@@ -1022,7 +1140,6 @@ function initPaint(pane, fileName) {
             lastX = bufferX;
             lastY = bufferY;
 
-            // Rysowanie kropki również po samym kliknięciu
             bufferCtx.beginPath();
             bufferCtx.arc(
                 bufferX,
@@ -1040,10 +1157,6 @@ function initPaint(pane, fileName) {
             redraw();
         }
     });
-
-    //----------------------------------------------------------------------------------------//
-    // RUCH MYSZY — RYSOWANIE I PRZESUWANIE
-    //----------------------------------------------------------------------------------------//
 
     canvas.addEventListener('mousemove', e => {
         const rect = canvas.getBoundingClientRect();
@@ -1079,10 +1192,6 @@ function initPaint(pane, fileName) {
         }
     });
 
-    //----------------------------------------------------------------------------------------//
-    // ZWALNIANIE PRZYCISKÓW MYSZY I ZAPIS
-    //----------------------------------------------------------------------------------------//
-
     window.addEventListener('mouseup', e => {
         if (e.button === 2) {
             isPanning = false;
@@ -1094,10 +1203,6 @@ function initPaint(pane, fileName) {
             saveDrawing();
         }
     });
-
-    //----------------------------------------------------------------------------------------//
-    // ZOOM — PRZYBLIŻANIE I ODDALANIE SCROLLEM
-    //----------------------------------------------------------------------------------------//
 
     canvas.addEventListener('wheel', e => {
         e.preventDefault();
@@ -1126,18 +1231,22 @@ function initPaint(pane, fileName) {
 //----------------------------------------------------------------------------------------//
 
 function applySyntaxHighlighting(textarea, highlightDiv) {
-    const source = textarea.value;
+    let text = textarea.value;
+
+    text = text.replace(/&/g, "&amp;")
+               .replace(/</g, "&lt;")
+               .replace(/>/g, "&gt;");
 
     const keywords = {
-        function: '#e04a56',
-        let: '#e04a56',
-        const: '#e04a56',
-        false: '#61afef',
-        true: '#61afef',
-        return: '#9355a7',
-        for: '#c678dd',
-        if: '#c678dd',
-        while: '#c678dd'
+        'function': '#e04a56',
+        'let': '#e04a56',
+        'const': '#e04a56',
+        'false': '#61afef',
+        'true': '#61afef',
+        'return': '#9355a7',
+        'for': '#c678dd',
+        'if': '#c678dd',
+        'while': '#c678dd'
     };
 
     const symbols = {
@@ -1145,265 +1254,222 @@ function applySyntaxHighlighting(textarea, highlightDiv) {
         ')': '#ffd900',
         '{': '#c678dd',
         '}': '#c678dd',
-        '<': '#61afef',
-        '>': '#61afef',
+        '&lt;': '#61afef',
+        '&gt;': '#61afef',
         '=': '#61afef'
     };
 
-    const tokenRegex = /\b(?:function|let|const|false|true|return|for|if|while)\b|"[^"]*"|[(){}<>=]/g;
+    const stringColor = '#61afef';
 
-    const escapeHTML = (value) => value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
+    const kwKeys = Object.keys(keywords).join('|');
+    const symKeys = Object.keys(symbols).map(s => s.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
 
-    let result = '';
-    let lastIndex = 0;
+    const combinedRegex = new RegExp(`(\\b(?:${kwKeys})\\b)|("[^"]*?")|(${symKeys})`, 'g');
 
-    for (const match of source.matchAll(tokenRegex)) {
-        const token = match[0];
-        const index = match.index;
-
-        result += escapeHTML(source.slice(lastIndex, index));
-
-        let color = keywords[token] || symbols[token];
-
-        if (token.startsWith('"') && token.endsWith('"')) {
-            color = '#61afef';
+    text = text.replace(combinedRegex, (match, kw, str, sym) => {
+        if (kw) {
+            return `<span style="color: ${keywords[kw]}; font-weight: bold;">${kw}</span>`;
         }
+        if (str) {
+            return `<span style="color: ${stringColor}; font-weight: bold;">${str}</span>`;
+        }
+        if (sym) {
+            const displaySym = sym === '&lt;' ? '<' : (sym === '&gt;' ? '>' : sym);
+            return `<span style="color: ${symbols[sym]}; font-weight: bold;">${displaySym}</span>`;
+        }
+        return match;
+    });
 
-        const escapedToken = escapeHTML(token);
-
-        result += color
-            ? `<span style="color: ${color}; font-weight: bold;">${escapedToken}</span>`
-            : escapedToken;
-
-        lastIndex = index + token.length;
-    }
-
-    result += escapeHTML(source.slice(lastIndex));
-    highlightDiv.innerHTML = result + '\n';
+    highlightDiv.innerHTML = text + '\n';
 }
 
 function initHighlighting(pane, textarea) {
-    // Tworzymy div pod spodem textarea na podświetlony tekst
     const highlightDiv = document.createElement('div');
     highlightDiv.className = 'code-highlight';
 
-    // Wkładamy textarea i div do wspólnego kontenera z odpowiednią klasą
     const wrapper = document.createElement('div');
     wrapper.className = 'editor-container';
 
-    // Przenosimy textarea do wrappera
     textarea.parentNode.replaceChild(wrapper, textarea);
     wrapper.appendChild(highlightDiv);
     wrapper.appendChild(textarea);
 
-    // Aktualizacja kolorów przy pisaniu
-    textarea.addEventListener('input', () => {
-        applySyntaxHighlighting(textarea, highlightDiv);
-    });
+    textarea.refreshHighlighting = () => applySyntaxHighlighting(textarea, highlightDiv);
+    textarea.addEventListener('input', textarea.refreshHighlighting);
 
-    // Synchronizacja przewijania między textarea a warstwą pod spodem
     textarea.addEventListener('scroll', () => {
         highlightDiv.scrollTop = textarea.scrollTop;
         highlightDiv.scrollLeft = textarea.scrollLeft;
     });
 
-    // Pierwsze uruchomienie, żeby pokolorować tekst domyślny
-    applySyntaxHighlighting(textarea, highlightDiv);
+    textarea.refreshHighlighting();
 }
 
-
- //-------------------Kocia łapka------------------//
+//-----------------------------------Kocia łapka------------------//
 
 const workspaceTitle = document.getElementById("workspaceTitle");
 
-const catPaw = document.createElement("img");
-catPaw.id = "catPawAnimation";
-catPaw.src = "../cat/cat-paw1.png";
-catPaw.alt = "";
-document.body.appendChild(catPaw);
+if (workspaceTitle) {
+    const catPaw = document.createElement("img");
+    catPaw.id = "catPawAnimation";
+    catPaw.src = "../cat/cat-paw1.png";
+    catPaw.alt = "";
+    document.body.appendChild(catPaw);
 
-let pawAnimationFrame = null;
-let pawWalkTimeout = null;
-let catWalkStarted = false;
+    let pawAnimationFrame = null;
+    let pawWalkTimeout = null;
+    let catWalkStarted = false;
 
-workspaceTitle.addEventListener("click", function(event) {
-    // Przerwij poprzednią animację, jeśli trwa
-    if (pawAnimationFrame !== null || catWalkStarted === true) {
-        return;
-    }
-
-    const startX = -75;
-    const startY = -75;
-    const targetX = event.clientX;
-    const targetY = event.clientY;
-
-    const startTime = performance.now();
-    const attackDuration = 500;
-    const returnDuration = 500;
-    const pauseDuration = 90;
-
-    catPaw.style.opacity = "1";
-
-    function animate(now) {
-        const elapsed = now - startTime;
-        catPaw.style.display = "block";
-        let x, y, scale;
-
-        if (elapsed < attackDuration) {
-            // Lot w stronę kliknięcia — coraz szybszy
-            const t = elapsed / attackDuration;
-            const progress = t * t * t;
-
-            x = startX + (targetX - startX) * progress;
-            y = startY + (targetY - startY) * progress;
-            scale = 1 + 0.15 * progress;
-        } else if (elapsed < attackDuration + pauseDuration) {
-            // Krótkie pacnięcie
-            x = targetX;
-            y = targetY;
-            scale = 1.15;
-        } else if (elapsed < attackDuration + pauseDuration + returnDuration) {
-            // Powrót do tego samego rogu
-            const t = (elapsed - attackDuration - pauseDuration)
-                / returnDuration;
-            const progress = t * t * t;
-
-            x = targetX + (startX - targetX) * progress;
-            y = targetY + (startY - targetY) * progress;
-            scale = 1.15 * (1 - progress);
-        } else {
-            // Koniec animacji
-            catPaw.style.opacity = "0";
-            catPaw.style.left = startX + "px";
-            catPaw.style.top = startY + "px";
-            catPaw.style.transform = "scale(1)";
-            pawAnimationFrame = null;
+    workspaceTitle.addEventListener("click", function(event) {
+        if (pawAnimationFrame !== null || catWalkStarted === true) {
             return;
         }
 
-        catPaw.style.left = x + "px";
-        catPaw.style.top = y + "px";
-        catPaw.style.transform = `translate(-50%, -50%) scale(${scale})`;
+        const startX = -75;
+        const startY = -75;
+        const targetX = event.clientX;
+        const targetY = event.clientY;
+
+        const startTime = performance.now();
+        const attackDuration = 500;
+        const returnDuration = 500;
+        const pauseDuration = 90;
+
+        catPaw.style.opacity = "1";
+
+        function animate(now) {
+            const elapsed = now - startTime;
+            catPaw.style.display = "block";
+            let x, y, scale;
+
+            if (elapsed < attackDuration) {
+                const t = elapsed / attackDuration;
+                const progress = t * t * t;
+
+                x = startX + (targetX - startX) * progress;
+                y = startY + (targetY - startY) * progress;
+                scale = 1 + 0.15 * progress;
+            } else if (elapsed < attackDuration + pauseDuration) {
+                x = targetX;
+                y = targetY;
+                scale = 1.15;
+            } else if (elapsed < attackDuration + pauseDuration + returnDuration) {
+                const t = (elapsed - attackDuration - pauseDuration) / returnDuration;
+                const progress = t * t * t;
+
+                x = targetX + (startX - targetX) * progress;
+                y = targetY + (startY - targetY) * progress;
+                scale = 1.15 * (1 - progress);
+            } else {
+                catPaw.style.opacity = "0";
+                catPaw.style.left = startX + "px";
+                catPaw.style.top = startY + "px";
+                catPaw.style.transform = "scale(1)";
+                pawAnimationFrame = null;
+                return;
+            }
+
+            catPaw.style.left = x + "px";
+            catPaw.style.top = y + "px";
+            catPaw.style.transform = `translate(-50%, -50%) scale(${scale})`;
+
+            pawAnimationFrame = requestAnimationFrame(animate);
+        }
+
+        catPaw.style.left = startX + "px";
+        catPaw.style.top = startY + "px";
+        catPaw.style.transform = "translate(-50%, -50%) scale(1)";
 
         pawAnimationFrame = requestAnimationFrame(animate);
-    }
+    });
 
-    // Ustaw pozycję początkową
-    catPaw.style.left = startX + "px";
-    catPaw.style.top = startY + "px";
-    catPaw.style.transform = "translate(-50%, -50%) scale(1)";
+    catPaw.addEventListener("click", function(event) {
+        event.stopPropagation();
 
-    pawAnimationFrame = requestAnimationFrame(animate);
-});
-
-
-catPaw.addEventListener("click", function(event) {
-    event.stopPropagation();
-
-    // Przerwij aktualną animację
-    if (pawAnimationFrame !== null) {
-        cancelAnimationFrame(pawAnimationFrame);
-        pawAnimationFrame = null;
-    }
-
-    // Anuluj poprzednie wywołanie catWalkIn
-    if (pawWalkTimeout !== null) {
-        clearTimeout(pawWalkTimeout);
-        pawWalkTimeout = null;
-    }
-
-    // Zapamiętaj aktualną pozycję łapki
-    const currentX = parseFloat(catPaw.style.left) || -59;
-    const currentY = parseFloat(catPaw.style.top) || -59;
-
-    // Zmień obrazek na speszoną łapkę
-    catPaw.src = "../cat/cat-paw2.png";
-    catPaw.style.opacity = "1";
-
-    const startX = -59;
-    const startY = -59;
-
-    // Kierunek lekkiego odskoku od kliknięcia
-    let dx = currentX + 59 - event.clientX;
-    let dy = currentY + 59 - event.clientY;
-
-    const distance = Math.hypot(dx, dy) || 1;
-
-    dx = dx / distance * 10;
-    dy = dy / distance * 10;
-
-    const recoilX = currentX + dx;
-    const recoilY = currentY + dy;
-
-    const recoilDuration = 180;
-    const pauseDuration = 350;
-    const returnDuration = 650;
-
-    const animationStart = performance.now();
-
-    function animatePaw(now) {
-        const elapsed = now - animationStart;
-
-        let x, y;
-
-        if (elapsed < recoilDuration) {
-            // Szybki, lekki odskok
-            const t = elapsed / recoilDuration;
-            const progress = 1 - Math.pow(1 - t, 3);
-
-            x = currentX + (recoilX - currentX) * progress;
-            y = currentY + (recoilY - currentY) * progress;
-
-        } else if (elapsed < recoilDuration + pauseDuration) {
-            // Chwila zawahania
-            x = recoilX;
-            y = recoilY;
-
-        } else if (elapsed < recoilDuration + pauseDuration + returnDuration) {
-            // Powolny powrót, stopniowo przyspieszający
-            const t = (elapsed - recoilDuration - pauseDuration)
-                / returnDuration;
-
-            const progress = t * t;
-
-            x = recoilX + (startX - recoilX) * progress;
-            y = recoilY + (startY - recoilY) * progress;
-
-        } else {
-            // Łapka schowana
-            catPaw.style.opacity = "0";
-            catPaw.style.left = startX + "px";
-            catPaw.style.top = startY + "px";
+        if (pawAnimationFrame !== null) {
+            cancelAnimationFrame(pawAnimationFrame);
             pawAnimationFrame = null;
-
-            // Po chwili wywołaj funkcję wejścia kota
-            pawWalkTimeout = setTimeout(function() {
-                pawWalkTimeout = null;
-
-                catWalkStarted = true;
-
-                if (typeof catWalkIn === "function") {
-                    catWalkIn();
-                }
-            }, 400);
-
-            return;
         }
 
-        catPaw.style.left = x + "px";
-        catPaw.style.top = y + "px";
+        if (pawWalkTimeout !== null) {
+            clearTimeout(pawWalkTimeout);
+            pawWalkTimeout = null;
+        }
+
+        const currentX = parseFloat(catPaw.style.left) || -59;
+        const currentY = parseFloat(catPaw.style.top) || -59;
+
+        catPaw.src = "../cat/cat-paw2.png";
+        catPaw.style.opacity = "1";
+
+        const startX = -59;
+        const startY = -59;
+
+        let dx = currentX + 59 - event.clientX;
+        let dy = currentY + 59 - event.clientY;
+
+        const distance = Math.hypot(dx, dy) || 1;
+
+        dx = dx / distance * 10;
+        dy = dy / distance * 10;
+
+        const recoilX = currentX + dx;
+        const recoilY = currentY + dy;
+
+        const recoilDuration = 180;
+        const pauseDuration = 350;
+        const returnDuration = 650;
+
+        const animationStart = performance.now();
+
+        function animatePaw(now) {
+            const elapsed = now - animationStart;
+            let x, y;
+
+            if (elapsed < recoilDuration) {
+                const t = elapsed / recoilDuration;
+                const progress = 1 - Math.pow(1 - t, 3);
+
+                x = currentX + (recoilX - currentX) * progress;
+                y = currentY + (recoilY - currentY) * progress;
+            } else if (elapsed < recoilDuration + pauseDuration) {
+                x = recoilX;
+                y = recoilY;
+            } else if (elapsed < recoilDuration + pauseDuration + returnDuration) {
+                const t = (elapsed - recoilDuration - pauseDuration) / returnDuration;
+                const progress = t * t;
+
+                x = recoilX + (startX - recoilX) * progress;
+                y = recoilY + (startY - recoilY) * progress;
+            } else {
+                catPaw.style.opacity = "0";
+                catPaw.style.left = startX + "px";
+                catPaw.style.top = startY + "px";
+                pawAnimationFrame = null;
+
+                pawWalkTimeout = setTimeout(function() {
+                    pawWalkTimeout = null;
+                    catWalkStarted = true;
+
+                    if (typeof catWalkIn === "function") {
+                        catWalkIn();
+                    }
+                }, 400);
+
+                return;
+            }
+
+            catPaw.style.left = x + "px";
+            catPaw.style.top = y + "px";
+
+            pawAnimationFrame = requestAnimationFrame(animatePaw);
+        }
 
         pawAnimationFrame = requestAnimationFrame(animatePaw);
-    }
+    });
+}
 
-    pawAnimationFrame = requestAnimationFrame(animatePaw);
-});
-
-
- //-------------------Chodzenie kota------------------//
+//-----------------------------------Chodzenie kota------------------//
 
 const catCharacter = document.createElement("img");
 catCharacter.id = "catCharacter";
@@ -1411,19 +1477,13 @@ catCharacter.alt = "";
 catCharacter.style.display = "none";
 document.body.appendChild(catCharacter);
 
-//-------------------Ustawienia------------------//
-
-const catSize = 80;          // Rozmiar kota w pikselach
-const catWalkDistance = 200;  // Odległość od lewej krawędzi ekranu
-const catWalkSpeed = 90;     // Prędkość kota w pikselach na sekundę
-const catFrameDuration = 200; // Czas wyświetlania jednej klatki w ms
-
-//-------------------Zmienne------------------//
+const catSize = 85;
+const catWalkDistance = 200;
+const catWalkSpeed = 90;
+const catFrameDuration = 200;
 
 let catWalkFrame = null;
 let catWalking = false;
-
-//-------------------Funkcje------------------//
 
 function catWalkIn() {
     if (catWalking) return;
@@ -1453,19 +1513,14 @@ function catWalkIn() {
         const progress = Math.min(elapsed / walkDuration, 1);
 
         const x = startX + (endX - startX) * progress;
-
         catCharacter.style.left = x + "px";
 
-        // Animacja chodzenia: klatki 1, 2, 3, 1, 2, 3...
-        const frameIndex = Math.floor(elapsed / catFrameDuration)
-            % walkFrames.length;
-
+        const frameIndex = Math.floor(elapsed / catFrameDuration) % walkFrames.length;
         catCharacter.src = walkFrames[frameIndex];
 
         if (progress < 1) {
             catWalkFrame = requestAnimationFrame(walk);
         } else {
-            // Kot zatrzymuje się i kładzie spać
             catCharacter.src = "../cat/cat-sleep.png";
             catWalkFrame = null;
             catWalking = false;
