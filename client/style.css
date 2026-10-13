@@ -325,3 +325,38 @@ body, html {
     z-index: 1;
     overflow: auto;
 }
+
+
+#catPawAnimation {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 80px;
+    height: auto;
+    pointer-events: auto;
+    cursor: pointer;
+    z-index: 99999;
+    display: none;
+    opacity: 0;
+    transform-origin: center;
+    will-change: left, top, transform, opacity;
+}
+
+#workspaceTitle {
+    cursor: pointer;
+    position: relative;
+    z-index: 10;
+}
+
+#catCharacter {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 118px;
+    height: 118px;
+    object-fit: contain;
+    pointer-events: none;
+    z-index: 999998;
+    opacity: 1;
+    will-change: left, top;
+}

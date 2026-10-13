@@ -7,7 +7,6 @@ const path = require('path');
 const app = express();
 app.use(cors());
 
-// Serve static files from the client folder (assuming 'client' is at the root level alongside 'server')
 app.use(express.static(path.join(__dirname, '../client')));
 
 const server = http.createServer(app);
@@ -18,7 +17,6 @@ const io = new Server(server, {
   }
 });
 
-// Store shared file contents in memory
 const files = new Map();
 
 io.on('connection', (socket) => {
@@ -31,17 +29,18 @@ io.on('connection', (socket) => {
     let suffix = 2;
 
     while (files.has(fileName)) {
-      fileName = `${requestedName} (${suffix})`;
+      fileName = `${requestedName.replace(/\.[^/.]+$/, '')} (${suffix})${path.extname(requestedName)}`;
       suffix++;
     }
 
-    files.set(fileName, '');
-    socket.broadcast.emit('file-added', { fileName, content: '' });
+    const initialContent = '';
+    files.set(fileName, initialContent);
+    socket.broadcast.emit('file-added', { fileName, content: initialContent });
     if (typeof acknowledge === 'function') acknowledge(fileName);
   });
 
   socket.on('file-content-change', ({ fileName, content }) => {
-    if (!files.has(fileName) || typeof content !== 'string') return;
+    if (!files.has(fileName)) return;
 
     files.set(fileName, content);
     socket.broadcast.emit('file-content-change', { fileName, content });
@@ -61,7 +60,6 @@ io.on('connection', (socket) => {
 
   socket.on('delete-file', (fileName) => {
     if (!files.delete(fileName)) return;
-
     socket.broadcast.emit('file-deleted', fileName);
   });
 
