@@ -1529,3 +1529,378 @@ function catWalkIn() {
 
     catWalkFrame = requestAnimationFrame(walk);
 }
+
+
+/*-----------------------------------Kalkulator-----------------------------------*/
+
+// Warstwa na pływające okienka — niezależna od drzewa układu
+let floatingWindowsLayer = null;
+
+function getFloatingWindowsLayer() {
+    if (floatingWindowsLayer) return floatingWindowsLayer;
+
+    floatingWindowsLayer = document.createElement('div');
+    floatingWindowsLayer.id = 'floating-windows-layer';
+
+    Object.assign(floatingWindowsLayer.style, {
+        position: 'fixed',
+        inset: '0',
+        zIndex: '1000',
+        pointerEvents: 'none'
+    });
+
+    document.body.appendChild(floatingWindowsLayer);
+
+    return floatingWindowsLayer;
+}
+
+
+// Tworzenie okienka kalkulatora
+function createCalculatorWindow() {
+    const layer = getFloatingWindowsLayer();
+
+    const calculatorWindow = document.createElement('div');
+    calculatorWindow.className = 'floating-calculator-window';
+
+    Object.assign(calculatorWindow.style, {
+        position: 'fixed',
+        width: '320px',
+        height: '300px',
+        left: '50%',
+        top: '50%',
+        transform: 'translate(-50%, -50%)',
+        display: 'flex',
+        flexDirection: 'column',
+        background: '#36393f',
+        border: '1px solid #202225',
+        borderRadius: '8px',
+        boxShadow: '0 5px 20px rgba(0, 0, 0, 0.4)',
+        overflow: 'hidden',
+        pointerEvents: 'auto',
+        color: '#dcddde',
+        fontFamily: 'Arial, sans-serif'
+    });
+
+    calculatorWindow.innerHTML = `
+        <div class="calculator-title-bar" style="
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            background: #2f3136;
+            border-bottom: 1px solid #202225;
+            cursor: grab;
+            user-select: none;
+            font-size: 14px;
+            font-weight: bold;
+        ">
+            <span>🧮 Kalkulator</span>
+
+            <button class="close-calculator-btn" title="Zamknij okienko" style="
+                background: transparent;
+                border: none;
+                color: #8e9297;
+                cursor: pointer;
+                font-size: 16px;
+                padding: 2px 6px;
+            ">✕</button>
+        </div>
+
+        <div class="calculator-content" style="
+            flex: 1;
+            min-height: 0;
+            padding: 12px;
+            overflow: auto;
+        "></div>
+    `;
+
+    layer.appendChild(calculatorWindow);
+
+    // Zamknięcie okienka bez zmiany układu innych elementów
+    calculatorWindow.querySelector('.close-calculator-btn')
+        .addEventListener('click', () => {
+            calculatorWindow.remove();
+        });
+
+    // Przesuwanie okienka za górny pasek
+    const titleBar = calculatorWindow.querySelector('.calculator-title-bar');
+
+    titleBar.addEventListener('mousedown', (event) => {
+        if (event.target.closest('.close-calculator-btn')) return;
+
+        event.preventDefault();
+
+        const rect = calculatorWindow.getBoundingClientRect();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const startLeft = rect.left;
+        const startTop = rect.top;
+
+        titleBar.style.cursor = 'grabbing';
+
+        function moveWindow(moveEvent) {
+            const canvasRect = mainContentEl.getBoundingClientRect();
+
+            let newLeft = startLeft + moveEvent.clientX - startX;
+            let newTop = startTop + moveEvent.clientY - startY;
+
+            // Okienko pozostaje w granicach kanwy
+            newLeft = Math.max(
+                canvasRect.left,
+                Math.min(newLeft, canvasRect.right - rect.width)
+            );
+
+            newTop = Math.max(
+                canvasRect.top,
+                Math.min(newTop, canvasRect.bottom - rect.height)
+            );
+
+            calculatorWindow.style.left = `${newLeft}px`;
+            calculatorWindow.style.top = `${newTop}px`;
+            calculatorWindow.style.transform = 'none';
+        }
+
+        function stopMoving() {
+            window.removeEventListener('mousemove', moveWindow);
+            window.removeEventListener('mouseup', stopMoving);
+            titleBar.style.cursor = 'grab';
+        }
+
+        window.addEventListener('mousemove', moveWindow);
+        window.addEventListener('mouseup', stopMoving);
+    });
+
+    // Tutaj później uruchomimy właściwy kalkulator
+    initCalculator(calculatorWindow);
+}
+
+
+// Miejsce na całą logikę kalkulatora — dopiszemy ją później
+function initCalculator(windowElement) {
+
+}
+
+
+function openCalc(){
+    createCalculatorWindow();
+    document.getElementById('new-item-menu').classList.remove('show');
+}
+
+
+function initCalculator(windowElement) {
+    const content = windowElement.querySelector('.calculator-content');
+
+    //----------------Zmienne kalkulatora----------------//
+
+    let currentInput = '0';
+    let previousInput = null;
+    let operator = null;
+    let shouldResetDisplay = false;
+
+    //----------------Wygląd kalkulatora----------------//
+
+    content.innerHTML = `
+        <div class="calculator-display" style="
+            background: #202225;
+            padding: 15px;
+            margin: 10px;
+            border-radius: 5px;
+            text-align: right;
+            font-size: 28px;
+            min-height: 35px;
+            overflow: hidden;
+            overflow-wrap: anywhere;
+        ">0</div>
+
+        <div class="calculator-buttons" style="
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px;
+            padding: 0 10px 10px;
+            flex: 1;
+        ">
+            <button data-action="clear">C</button>
+            <button data-action="backspace">⌫</button>
+            <button data-operator="/">÷</button>
+            <button data-operator="*">×</button>
+
+            <button data-number="7">7</button>
+            <button data-number="8">8</button>
+            <button data-number="9">9</button>
+            <button data-operator="-">−</button>
+
+            <button data-number="4">4</button>
+            <button data-number="5">5</button>
+            <button data-number="6">6</button>
+            <button data-operator="+">+</button>
+
+            <button data-number="1">1</button>
+            <button data-number="2">2</button>
+            <button data-number="3">3</button>
+            <button data-action="equals" style="
+                grid-row: span 2;
+                background: #5865f2;
+            ">=</button>
+
+            <button data-action="sign">±</button>
+            <button data-number="0">0</button>
+            <button data-action="decimal">.</button>
+        </div>
+    `;
+
+    const display = content.querySelector('.calculator-display');
+    const buttons = content.querySelectorAll('button');
+
+    buttons.forEach(button => {
+        Object.assign(button.style, {
+            border: 'none',
+            borderRadius: '5px',
+            background: '#4f545c',
+            color: '#ffffff',
+            fontSize: '18px',
+            cursor: 'pointer'
+        });
+
+        button.addEventListener('mouseenter', () => {
+            button.style.filter = 'brightness(1.2)';
+        });
+
+        button.addEventListener('mouseleave', () => {
+            button.style.filter = 'none';
+        });
+    });
+
+    //----------------Wyświetlanie----------------//
+
+    function updateDisplay() {
+        display.textContent = currentInput;
+    }
+
+    //----------------Obliczenia----------------//
+
+    function calculate(a, b, op) {
+        if (op === '+') return a + b;
+        if (op === '-') return a - b;
+        if (op === '*') return a * b;
+        if (op === '/') return b === 0 ? null : a / b;
+        return b;
+    }
+
+    //----------------Obsługa przycisków----------------//
+
+    buttons.forEach(button => {
+        button.addEventListener('click', () => {
+            const number = button.dataset.number;
+            const action = button.dataset.action;
+            const newOperator = button.dataset.operator;
+
+            if (number !== undefined) {
+                if (currentInput === 'Błąd') currentInput = '0';
+
+                if (currentInput === '0' || shouldResetDisplay) {
+                    currentInput = number;
+                    shouldResetDisplay = false;
+                } else if (currentInput.length < 15) {
+                    currentInput += number;
+                }
+
+                updateDisplay();
+                return;
+            }
+
+            if (action === 'clear') {
+                currentInput = '0';
+                previousInput = null;
+                operator = null;
+                shouldResetDisplay = false;
+                updateDisplay();
+                return;
+            }
+
+            if (action === 'backspace') {
+                if (shouldResetDisplay || currentInput === 'Błąd') {
+                    currentInput = '0';
+                    shouldResetDisplay = false;
+                } else {
+                    currentInput = currentInput.length > 1
+                        ? currentInput.slice(0, -1)
+                        : '0';
+                }
+
+                updateDisplay();
+                return;
+            }
+
+            if (action === 'decimal') {
+                if (shouldResetDisplay || currentInput === 'Błąd') {
+                    currentInput = '0';
+                    shouldResetDisplay = false;
+                }
+
+                if (!currentInput.includes('.')) {
+                    currentInput += '.';
+                }
+
+                updateDisplay();
+                return;
+            }
+
+            if (action === 'sign') {
+                if (currentInput !== '0' && currentInput !== 'Błąd') {
+                    currentInput = String(-Number(currentInput));
+                }
+
+                updateDisplay();
+                return;
+            }
+
+            if (newOperator) {
+                if (currentInput === 'Błąd') return;
+
+                if (operator && !shouldResetDisplay) {
+                    const result = calculate(
+                        previousInput,
+                        Number(currentInput),
+                        operator
+                    );
+
+                    if (result === null || !Number.isFinite(result)) {
+                        currentInput = 'Błąd';
+                        previousInput = null;
+                        operator = null;
+                        shouldResetDisplay = true;
+                        updateDisplay();
+                        return;
+                    }
+
+                    currentInput = String(Number(result.toPrecision(12)));
+                }
+
+                previousInput = Number(currentInput);
+                operator = newOperator;
+                shouldResetDisplay = true;
+                updateDisplay();
+                return;
+            }
+
+            if (action === 'equals' && operator && previousInput !== null) {
+                const result = calculate(
+                    previousInput,
+                    Number(currentInput),
+                    operator
+                );
+
+                if (result === null || !Number.isFinite(result)) {
+                    currentInput = 'Błąd';
+                } else {
+                    currentInput = String(Number(result.toPrecision(12)));
+                }
+
+                previousInput = null;
+                operator = null;
+                shouldResetDisplay = true;
+                updateDisplay();
+            }
+        });
+    });
+}
