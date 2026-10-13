@@ -605,32 +605,65 @@ function startRenaming(fileItem) {
                 alert('Plik o takiej nazwie już istnieje!');
                 nameSpan.textContent = oldName;
             } else {
-                fileContents[newName] = fileContents[oldName];
-                delete fileContents[oldName];
-
-                fileTypes[newName] = fileTypes[oldName];
-                delete fileTypes[oldName];
-
-                fileItem.dataset.filename = newName;
-
-                function renameInTree(node) {
-                    if (!node) return;
-
-                    if (node.type === 'leaf' && node.content === oldName) {
-                        node.content = newName;
-                    } else if (node.type === 'container') {
-                        renameInTree(node.children[0]);
-                        renameInTree(node.children[1]);
-                    }
+                // Jeśli jesteśmy połączeni z serwerem, wysyłamy żądanie zmiany nazwy
+                if (socket) {
+                    socket.emit('rename-file', { oldName, newName }, (success) => {
+                        if (success) {
+                            // Jeśli serwer zatwierdził zmianę, aktualizujemy stan lokalny
+                            applyFileRenameLocal(oldName, newName);
+                        } else {
+                            alert('Serwer odrzucił zmianę nazwy (plik o tej nazwie już istnieje).');
+                            nameSpan.textContent = oldName;
+                        }
+                    });
+                } else {
+                    // Tryb offline / bez socketa
+                    applyFileRenameLocal(oldName, newName);
                 }
-
-                renameInTree(layoutTree);
-                renderWorkspace();
             }
         } else {
             nameSpan.textContent = oldName;
         }
     }
+
+    function applyFileRenameLocal(oldName, newName) {
+        fileContents[newName] = fileContents[oldName];
+        delete fileContents[oldName];
+
+        fileTypes[newName] = fileTypes[oldName];
+        delete fileTypes[oldName];
+
+        fileItem.dataset.filename = newName;
+
+        function renameInTree(node) {
+            if (!node) return;
+
+            if (node.type === 'leaf' && node.content === oldName) {
+                node.content = newName;
+            } else if (node.type === 'container') {
+                renameInTree(node.children[0]);
+                renameInTree(node.children[1]);
+            }
+        }
+
+        renameInTree(layoutTree);
+        renderWorkspace();
+    }
+
+    function cancelRenaming() {
+        cleanup();
+        nameSpan.textContent = oldName;
+    }
+
+    function cleanup() {
+        nameSpan.contentEditable = false;
+        nameSpan.removeEventListener('keydown', onKeyDown);
+        nameSpan.removeEventListener('blur', finishRenaming);
+        window.getSelection().removeAllRanges();
+    }
+
+    nameSpan.addEventListener('keydown', onKeyDown);
+    nameSpan.addEventListener('blur', finishRenaming);
 
     function cancelRenaming() {
         cleanup();
