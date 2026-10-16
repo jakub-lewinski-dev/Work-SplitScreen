@@ -6,6 +6,7 @@ const fileContents = {};
 const fileTypes = {};
 let fileCounter = 1;
 let paintCounter = 1;
+let graphCounter = 1;
 let layoutTree = null;
 const mainContentEl = document.getElementById('main-content');
 const filesListEl = document.getElementById('files-list');
@@ -63,15 +64,6 @@ window.addEventListener('click', (e) => {
     }
 });
 
-// Automatyczne podpięcie zdarzenia do przycisku tworzenia pliku w menu (jeśli istnieje)
-document.addEventListener('DOMContentLoaded', () => {
-    const createTextFileBtn = document.getElementById('create-text-file-btn');
-    if (createTextFileBtn) {
-        createTextFileBtn.addEventListener('click', () => {
-            createTextEditorFile();
-        });
-    }
-});
 
 //----------------------------------------------------------------------------------------//
 // TWORZENIE NOWEGO PLIKU (LISTA BOCZNA)
@@ -121,10 +113,46 @@ function createPaintFile() {
     if (menu) menu.classList.remove('show');
 }
 
+//----------------------------------------------------------------------------------------//
+// TWORZENIE PLIKU WYKRESU
+//----------------------------------------------------------------------------------------//
+
+function createGraphFile() {
+    const fileName = `Wykres_${graphCounter}.graph`;
+    graphCounter++;
+
+    fileTypes[fileName] = 'graph';
+    fileContents[fileName] = '';
+
+    const openFile = (name) => {
+        if (!fileContents.hasOwnProperty(name)) {
+            fileContents[name] = '';
+        }
+
+        fileTypes[name] = 'graph';
+        addOpenFile(name);
+    };
+
+    if (socket) {
+        socket.emit('open-file', fileName, openFile);
+    } else {
+        openFile(fileName);
+    }
+
+    const menu = document.getElementById('new-item-menu');
+    if (menu) menu.classList.remove('show');
+}
+
 function addSyncedFile(fileName, content = '') {
     if (!fileContents.hasOwnProperty(fileName)) fileContents[fileName] = content;
     // Domyślnie pliki z synchronizacji traktujemy jako tekst, chyba że rozszerzenie wskazuje inaczej
-    fileTypes[fileName] = fileName.endsWith('.png') ? 'paint' : 'text';
+    if (fileName.endsWith('.png')) {
+        fileTypes[fileName] = 'paint';
+    } else if (fileName.endsWith('.graph')) {
+        fileTypes[fileName] = 'graph';
+    } else {
+        fileTypes[fileName] = 'text';
+    }
     addOpenFile(fileName);
 }
 
@@ -434,14 +462,25 @@ function createPaneElement(fileName) {
     pane.style.boxSizing = 'border-box';
 
     let innerContent = '';
-    let icon = type === 'paint' ? '🎨' : '🗂️';
+    let icon = '🗂️';
 
+    if (type === 'paint') {
+        icon = '🎨';
+    } else if (type === 'graph') {
+        icon = '📈';
+    }
     if (type === 'text') {
         innerContent = `<textarea class="pane-textarea" spellcheck="false"></textarea>`;
     } else if (type === 'paint') {
         innerContent = `
             <div class="paint-canvas-container" style="flex: 1; display: flex; align-items: center; justify-content: center; background-color: #36393f; overflow: auto; position: relative;">
                 <!-- Tutaj JavaScript wstrzyknie canvas -->
+            </div>
+        `;
+    } else if (type === 'graph') {
+        innerContent = `
+            <div class="graph-container"
+                style="flex: 1; min-height: 0; overflow: hidden;">
             </div>
         `;
     }
@@ -469,6 +508,8 @@ function createPaneElement(fileName) {
         });
     } else if (type === 'paint') {
         initPaint(pane, fileName);
+    } else if (type === 'graph') {
+        initGraph(pane, fileName);
     }
 
     pane.querySelector('.maximize-pane-btn').addEventListener('click', () => {
@@ -1903,4 +1944,750 @@ function initCalculator(windowElement) {
             }
         });
     });
+}
+
+
+/*-----------------------------------Wykresy funkcji-----------------------------------*/
+
+// Inicjalizacja edytora wykresów
+function initGraph(pane, fileName) {
+    const container = pane.querySelector('.graph-container');
+    if (!container) return;
+
+    //----------------Zmienne wykresu----------------//
+
+    const colors = [
+        '#5865f2',
+        '#ed4245',
+        '#3ba55d',
+        '#faa61a',
+        '#eb459e',
+        '#00b0f4'
+    ];
+
+    let functions = [];
+    let nextFunctionId = 1;
+
+    let scale = 50; // Liczba pikseli na jedną jednostkę
+    let offsetX = 0;
+    let offsetY = 0;
+
+    let isPanning = false;
+    let panStartX = 0;
+    let panStartY = 0;
+    let startOffsetX = 0;
+    let startOffsetY = 0;
+
+    //----------------Interfejs----------------//
+
+    container.style.position = 'relative';
+    container.style.display = 'flex';
+    container.style.flexDirection = 'column';
+    container.style.background = '#202225';
+    container.style.color = '#dcddde';
+    container.style.minHeight = '0';
+
+    container.innerHTML = `
+        <div class="graph-toolbar" style="
+            display:flex;
+            align-items:center;
+            gap:8px;
+            padding:10px;
+            background:#2f3136;
+            border-bottom:1px solid #484b52;
+            flex-wrap:wrap;
+        ">
+            <input class="graph-expression"
+                type="text"
+                placeholder="Np. x^2 albo sin(x)"
+                style="
+                    flex:1;
+                    min-width:130px;
+                    padding:9px;
+                    background:#202225;
+                    color:white;
+                    border:1px solid #484b52;
+                    border-radius:5px;
+                ">
+
+            <button class="graph-add">+ Dodaj</button>
+            <button class="graph-reset">Wyśrodkuj</button>
+        </div>
+
+        <div class="graph-function-list" style="
+            display:flex;
+            flex-direction:column;
+            gap:5px;
+            padding:8px 10px;
+            background:#2f3136;
+            max-height:115px;
+            overflow-y:auto;
+        "></div>
+
+        <div class="graph-canvas-wrapper" style="
+            flex:1;
+            min-height:0;
+            position:relative;
+            overflow:hidden;
+        ">
+            <canvas class="graph-canvas" style="
+                position:absolute;
+                inset:0;
+                width:100%;
+                height:100%;
+                display:block;
+                cursor:crosshair;
+                touch-action:none;
+            "></canvas>
+        </div>
+    `;
+
+    const input = container.querySelector('.graph-expression');
+    const addButton = container.querySelector('.graph-add');
+    const resetButton = container.querySelector('.graph-reset');
+    const functionList = container.querySelector('.graph-function-list');
+    const canvas = container.querySelector('.graph-canvas');
+    const ctx = canvas.getContext('2d');
+
+    //----------------Wczytywanie zapisanych danych----------------//
+
+    function loadGraphData(content) {
+        if (!content) return;
+
+        try {
+            const data = JSON.parse(content);
+
+            if (data.version !== 1 || !Array.isArray(data.functions)) {
+                return;
+            }
+
+            functions = data.functions
+                .filter(f =>
+                    typeof f.expression === 'string' &&
+                    typeof f.color === 'string'
+                )
+                .map(f => ({
+                    id: nextFunctionId++,
+                    expression: f.expression,
+                    color: f.color
+                }));
+
+            if (data.view) {
+                if (Number.isFinite(data.view.scale)) {
+                    scale = Math.max(5, Math.min(300, data.view.scale));
+                }
+
+                if (Number.isFinite(data.view.offsetX)) {
+                    offsetX = data.view.offsetX;
+                }
+
+                if (Number.isFinite(data.view.offsetY)) {
+                    offsetY = data.view.offsetY;
+                }
+            }
+        } catch (error) {
+            // Pusty plik rozpoczyna nowy wykres.
+        }
+    }
+
+    loadGraphData(fileContents[fileName] || '');
+
+    //----------------Zapis i synchronizacja----------------//
+
+    function saveGraphData() {
+        const data = {
+            version: 1,
+            functions: functions.map(f => ({
+                expression: f.expression,
+                color: f.color
+            })),
+            view: {
+                scale,
+                offsetX,
+                offsetY
+            }
+        };
+
+        const content = JSON.stringify(data);
+
+        fileContents[fileName] = content;
+
+        if (socket) {
+            socket.emit('file-content-change', {
+                fileName,
+                content
+            });
+        }
+    }
+
+    //----------------Parser wyrażeń matematycznych----------------//
+
+    // Obsługiwane operatory: + - * / ^
+    // Obsługiwane funkcje: sin, cos, tan, sqrt, abs, ln, log, exp
+    // Stałe: pi, e
+    // Zmienna: x
+    //
+    // Parser nie wykonuje kodu JavaScript z pola tekstowego.
+
+    function compileExpression(expression) {
+        const tokens = [];
+        const tokenRegex =
+            /\s*(\d+(?:\.\d*)?(?:e[+-]?\d+)?|[a-zA-Z]+|[()+\-*/^])/gy;
+
+        let position = 0;
+
+        while (position < expression.length) {
+            tokenRegex.lastIndex = position;
+            const match = tokenRegex.exec(expression);
+
+            if (!match) {
+                throw new Error('Nieprawidłowy znak: ' + expression[position]);
+            }
+
+            tokens.push(match[1]);
+            position = tokenRegex.lastIndex;
+        }
+
+        let index = 0;
+
+        function peek() {
+            return tokens[index];
+        }
+
+        function consume() {
+            return tokens[index++];
+        }
+
+        function parsePrimary() {
+            const token = consume();
+
+            if (token === undefined) {
+                throw new Error('Niepełne wyrażenie');
+            }
+
+            if (token === '(') {
+                const value = parseSum();
+
+                if (consume() !== ')') {
+                    throw new Error('Brak zamykającego nawiasu');
+                }
+
+                return value;
+            }
+
+            if (token === '+') return parseUnary();
+            if (token === '-') {
+                const value = parseUnary();
+                return x => -value(x);
+            }
+
+            if (/^\d/.test(token)) {
+                const number = Number(token);
+                return () => number;
+            }
+
+            if (/^[a-zA-Z]+$/.test(token)) {
+                const name = token.toLowerCase();
+
+                if (name === 'x') return x => x;
+                if (name === 'pi') return () => Math.PI;
+                if (name === 'e') return () => Math.E;
+
+                const mathFunctions = {
+                    sin: Math.sin,
+                    cos: Math.cos,
+                    tan: Math.tan,
+                    sqrt: Math.sqrt,
+                    abs: Math.abs,
+                    ln: Math.log,
+                    log: Math.log10,
+                    exp: Math.exp
+                };
+
+                if (!(name in mathFunctions)) {
+                    throw new Error('Nieznana funkcja: ' + name);
+                }
+
+                if (consume() !== '(') {
+                    throw new Error('Po ' + name + ' wpisz nawias, np. sin(x)');
+                }
+
+                const argument = parseSum();
+
+                if (consume() !== ')') {
+                    throw new Error('Brak zamykającego nawiasu');
+                }
+
+                const fn = mathFunctions[name];
+
+                return x => fn(argument(x));
+            }
+
+            throw new Error('Nieoczekiwany element: ' + token);
+        }
+
+        function parseUnary() {
+            return parsePrimary();
+        }
+
+        function parsePower() {
+            const left = parseUnary();
+
+            if (peek() === '^') {
+                consume();
+                const right = parsePower();
+                return x => Math.pow(left(x), right(x));
+            }
+
+            return left;
+        }
+
+        function parseProduct() {
+            let left = parsePower();
+
+            while (peek() === '*' || peek() === '/') {
+                const operator = consume();
+                const right = parsePower();
+                const previous = left;
+
+                left = operator === '*'
+                    ? x => previous(x) * right(x)
+                    : x => previous(x) / right(x);
+            }
+
+            return left;
+        }
+
+        function parseSum() {
+            let left = parseProduct();
+
+            while (peek() === '+' || peek() === '-') {
+                const operator = consume();
+                const right = parseProduct();
+                const previous = left;
+
+                left = operator === '+'
+                    ? x => previous(x) + right(x)
+                    : x => previous(x) - right(x);
+            }
+
+            return left;
+        }
+
+        if (tokens.length === 0) {
+            throw new Error('Wpisz funkcję');
+        }
+
+        const result = parseSum();
+
+        if (index !== tokens.length) {
+            throw new Error('Nieoczekiwany element: ' + peek());
+        }
+
+        return result;
+    }
+
+    //----------------Rysowanie siatki i osi----------------//
+
+    function drawGraph() {
+        const width = canvas.width;
+        const height = canvas.height;
+
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = '#202225';
+        ctx.fillRect(0, 0, width, height);
+
+        const centerX = width / 2 + offsetX;
+        const centerY = height / 2 + offsetY;
+
+        // Dobór odstępów siatki zależnie od przybliżenia.
+        const rawStep = 50 / scale;
+        const power = Math.pow(10, Math.floor(Math.log10(rawStep)));
+
+        const normalized = rawStep / power;
+        const niceStep = normalized <= 1 ? 1
+            : normalized <= 2 ? 2
+            : normalized <= 5 ? 5
+            : 10;
+
+        const step = niceStep * power;
+        const pixelStep = step * scale;
+
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = '#30343b';
+        ctx.beginPath();
+
+        const startGridX =
+            ((centerX % pixelStep) + pixelStep) % pixelStep;
+        const startGridY =
+            ((centerY % pixelStep) + pixelStep) % pixelStep;
+
+        for (let x = startGridX; x < width; x += pixelStep) {
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, height);
+        }
+
+        for (let y = startGridY; y < height; y += pixelStep) {
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+        }
+
+        ctx.stroke();
+
+        // Osie współrzędnych.
+        ctx.strokeStyle = '#aeb4be';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+
+        if (centerY >= 0 && centerY <= height) {
+            ctx.moveTo(0, centerY);
+            ctx.lineTo(width, centerY);
+        }
+
+        if (centerX >= 0 && centerX <= width) {
+            ctx.moveTo(centerX, 0);
+            ctx.lineTo(centerX, height);
+        }
+
+        ctx.stroke();
+
+        // Opisy wartości na osiach.
+        ctx.fillStyle = '#aeb4be';
+        ctx.font = '12px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+
+        for (let x = startGridX; x < width; x += pixelStep) {
+            const value = (x - centerX) / scale;
+            if (Math.abs(value) < step * 0.01) continue;
+
+            if (centerY >= -5 && centerY < height - 15) {
+                ctx.fillText(
+                    Number(value.toPrecision(5)),
+                    x,
+                    centerY + 5
+                );
+            }
+        }
+
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+
+        for (let y = startGridY; y < height; y += pixelStep) {
+            const value = (centerY - y) / scale;
+            if (Math.abs(value) < step * 0.01) continue;
+
+            if (centerX >= 0 && centerX < width - 35) {
+                ctx.fillText(
+                    Number(value.toPrecision(5)),
+                    centerX + 5,
+                    y
+                );
+            }
+        }
+
+        // Rysowanie wszystkich dodanych funkcji.
+        functions.forEach(f => {
+            let evaluate;
+
+            try {
+                evaluate = compileExpression(f.expression);
+            } catch (error) {
+                return;
+            }
+
+            ctx.beginPath();
+            ctx.strokeStyle = f.color;
+            ctx.lineWidth = 2;
+            ctx.lineJoin = 'round';
+
+            let drawing = false;
+            let previousY = null;
+
+            for (let px = 0; px < width; px++) {
+                const x = (px - centerX) / scale;
+                let y;
+
+                try {
+                    y = evaluate(x);
+                } catch (error) {
+                    drawing = false;
+                    previousY = null;
+                    continue;
+                }
+
+                const py = centerY - y * scale;
+
+                if (
+                    !Number.isFinite(py) ||
+                    Math.abs(py) > height * 10
+                ) {
+                    drawing = false;
+                    previousY = null;
+                    continue;
+                }
+
+                // Nie łączymy odległych punktów, np. przy asymptotach.
+                if (
+                    !drawing ||
+                    (previousY !== null &&
+                    Math.abs(py - previousY) > height * 0.5)
+                ) {
+                    ctx.moveTo(px, py);
+                } else {
+                    ctx.lineTo(px, py);
+                }
+
+                drawing = true;
+                previousY = py;
+            }
+
+            ctx.stroke();
+        });
+    }
+
+    //----------------Lista funkcji----------------//
+
+    function renderFunctionList() {
+        functionList.innerHTML = '';
+
+        if (functions.length === 0) {
+            const empty = document.createElement('span');
+            empty.textContent = 'Dodaj funkcję, aby wyświetlić wykres.';
+            empty.style.color = '#8e9297';
+            empty.style.fontSize = '13px';
+            functionList.appendChild(empty);
+            return;
+        }
+
+        functions.forEach(f => {
+            const row = document.createElement('div');
+
+            Object.assign(row.style, {
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                minHeight: '28px'
+            });
+
+            const colorMark = document.createElement('span');
+            colorMark.style.background = f.color;
+            colorMark.style.width = '12px';
+            colorMark.style.height = '12px';
+            colorMark.style.borderRadius = '50%';
+            colorMark.style.flexShrink = '0';
+
+            const expression = document.createElement('span');
+            expression.textContent = 'y = ' + f.expression;
+            expression.style.flex = '1';
+            expression.style.fontSize = '13px';
+            expression.style.overflowWrap = 'anywhere';
+
+            const removeButton = document.createElement('button');
+            removeButton.textContent = '✕';
+            removeButton.title = 'Usuń funkcję';
+            removeButton.style.cssText =
+                'background:#4f545c;color:white;border:0;' +
+                'border-radius:4px;padding:4px 8px;cursor:pointer;';
+
+            removeButton.addEventListener('click', () => {
+                functions = functions.filter(item => item.id !== f.id);
+                renderFunctionList();
+                drawGraph();
+                saveGraphData();
+            });
+
+            row.append(colorMark, expression, removeButton);
+            functionList.appendChild(row);
+        });
+    }
+
+    //----------------Dodawanie funkcji----------------//
+
+    function addFunction(expression, shouldSave = true) {
+        expression = expression.trim();
+
+        if (!expression) return;
+
+        try {
+            // Sprawdź wyrażenie, zanim trafi na listę.
+            compileExpression(expression);
+
+            functions.push({
+                id: nextFunctionId++,
+                expression,
+                color: colors[(nextFunctionId - 2) % colors.length]
+            });
+
+            input.value = '';
+            renderFunctionList();
+            drawGraph();
+
+            if (shouldSave) saveGraphData();
+        } catch (error) {
+            alert('Nieprawidłowa funkcja: ' + error.message);
+        }
+    }
+
+    addButton.addEventListener('click', () => {
+        addFunction(input.value);
+    });
+
+    input.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            addFunction(input.value);
+        }
+    });
+
+    //----------------Przybliżanie i przesuwanie----------------//
+
+    resetButton.addEventListener('click', () => {
+        scale = 50;
+        offsetX = 0;
+        offsetY = 0;
+        drawGraph();
+        saveGraphData();
+    });
+
+    canvas.addEventListener('contextmenu', event => {
+        event.preventDefault();
+    });
+
+    canvas.addEventListener('pointerdown', event => {
+        if (event.button !== 2 && event.button !== 1) return;
+
+        isPanning = true;
+        panStartX = event.clientX;
+        panStartY = event.clientY;
+        startOffsetX = offsetX;
+        startOffsetY = offsetY;
+
+        canvas.style.cursor = 'grabbing';
+        canvas.setPointerCapture(event.pointerId);
+        event.preventDefault();
+    });
+
+    canvas.addEventListener('pointermove', event => {
+        if (!isPanning) return;
+
+        const rect = canvas.getBoundingClientRect();
+
+        offsetX = startOffsetX +
+            (event.clientX - panStartX) * (canvas.width / rect.width);
+
+        offsetY = startOffsetY +
+            (event.clientY - panStartY) * (canvas.height / rect.height);
+
+        drawGraph();
+    });
+
+    function stopPanning() {
+        if (!isPanning) return;
+
+        isPanning = false;
+        canvas.style.cursor = 'crosshair';
+        saveGraphData();
+    }
+
+    canvas.addEventListener('pointerup', stopPanning);
+    canvas.addEventListener('pointercancel', stopPanning);
+    canvas.addEventListener('lostpointercapture', stopPanning);
+
+    canvas.addEventListener('wheel', event => {
+        event.preventDefault();
+
+        const rect = canvas.getBoundingClientRect();
+
+        const mouseX =
+            (event.clientX - rect.left) * (canvas.width / rect.width);
+
+        const mouseY =
+            (event.clientY - rect.top) * (canvas.height / rect.height);
+
+        const oldScale = scale;
+        const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
+
+        scale = Math.max(5, Math.min(300, scale * factor));
+
+        // Punkt pod kursorem pozostaje na swoim miejscu.
+        offsetX = mouseX -
+            (mouseX - canvas.width / 2 - offsetX) * (scale / oldScale)
+            - canvas.width / 2;
+
+        offsetY = mouseY -
+            (mouseY - canvas.height / 2 - offsetY) * (scale / oldScale)
+            - canvas.height / 2;
+
+        drawGraph();
+        saveGraphData();
+    }, { passive: false });
+
+    //----------------Dopasowanie do rozmiaru panelu----------------//
+
+    function resizeCanvas() {
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+
+        const dpr = window.devicePixelRatio || 1;
+
+        canvas.width = Math.round(rect.width * dpr);
+        canvas.height = Math.round(rect.height * dpr);
+
+        drawGraph();
+    }
+
+    const resizeObserver = new ResizeObserver(resizeCanvas);
+    resizeObserver.observe(container);
+
+    //----------------Synchronizacja z innymi użytkownikami----------------//
+
+    let applyingRemoteUpdate = false;
+
+    function handleRemoteGraphChange({ fileName: changedFile, content }) {
+        if (changedFile !== fileName || !content) return;
+
+        applyingRemoteUpdate = true;
+
+        loadRemoteGraph(content);
+
+        applyingRemoteUpdate = false;
+    }
+
+    function loadRemoteGraph(content) {
+        const oldFunctions = functions;
+        const oldScale = scale;
+        const oldOffsetX = offsetX;
+        const oldOffsetY = offsetY;
+
+        functions = [];
+        nextFunctionId = 1;
+
+        loadGraphData(content);
+
+        if (functions.length === 0 && oldFunctions.length > 0) {
+            functions = oldFunctions;
+            scale = oldScale;
+            offsetX = oldOffsetX;
+            offsetY = oldOffsetY;
+        }
+
+        renderFunctionList();
+        drawGraph();
+    }
+
+    if (socket) {
+        socket.on('file-content-change', handleRemoteGraphChange);
+
+        pane.querySelector('.close-pane-btn').addEventListener('click', () => {
+            socket.off('file-content-change', handleRemoteGraphChange);
+            resizeObserver.disconnect();
+        }, { once: true });
+    }
+
+    //----------------Start----------------//
+
+    renderFunctionList();
+
+    // Początkowe ustawienie rozmiaru po utworzeniu panelu.
+    requestAnimationFrame(resizeCanvas);
 }
