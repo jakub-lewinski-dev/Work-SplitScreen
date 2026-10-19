@@ -1,5 +1,5 @@
 //----------------------------------------------------------------------------------------//
-// STAN APLIKACJI I DRZEWO UKŁADU
+// STAN APLIKACJI I DRZEWO UKŁADU ORAZ SOCKET.IO
 //----------------------------------------------------------------------------------------//
 
 const fileContents = {};
@@ -11,10 +11,43 @@ let layoutTree = null;
 const mainContentEl = document.getElementById('main-content');
 const filesListEl = document.getElementById('files-list');
 
-// Inicjalizacja Socket.io (jeśli biblioteka jest dołączona w HTML)
-const socket = typeof io === 'function' ? io() : null;
+let currentSocketUrl = localStorage.getItem('lan_socket_url') || 'http://localhost:3000';
+let socket = null;
 
-if (socket) {
+function initSocketConnection(targetUrl) {
+    if (socket) {
+        socket.disconnect();
+    }
+
+    currentSocketUrl = targetUrl;
+    localStorage.setItem('lan_socket_url', targetUrl);
+
+    socket = io(targetUrl, {
+        reconnectionAttempts: 5,
+        timeout: 5000
+    });
+
+    const statusEl = document.getElementById('connection-status');
+
+    socket.on('connect', () => {
+        if (statusEl) {
+            if (targetUrl.includes('localhost') || targetUrl.includes('127.0.0.1')) {
+                statusEl.innerHTML = '🟢 Tryb: Host (Lokalny)';
+                statusEl.style.color = '#43b581';
+            } else {
+                statusEl.innerHTML = `🌐 Połączono z: ${targetUrl.replace('http://', '')}`;
+                statusEl.style.color = '#00b0f4';
+            }
+        }
+    });
+
+    socket.on('connect_error', () => {
+        if (statusEl) {
+            statusEl.innerHTML = '🔴 Błąd połączenia!';
+            statusEl.style.color = '#f04747';
+        }
+    });
+
     socket.on('files-state', (fileNames) => {
         fileNames.forEach(({ fileName, content }) => addSyncedFile(fileName, content));
     });
@@ -51,6 +84,47 @@ if (socket) {
     socket.on('file-deleted', removeFileEverywhere);
 }
 
+// Inicjalizacja połączenia przy starcie
+initSocketConnection(currentSocketUrl);
+
+// Podpięcie zdarzeń pod przyciski Host / Join w UI po załadowaniu DOM
+document.addEventListener('DOMContentLoaded', () => {
+    const btnHost = document.getElementById('btn-mode-host');
+    const btnJoin = document.getElementById('btn-mode-join');
+    const ipInput = document.getElementById('join-ip-input');
+
+    if (ipInput) {
+        ipInput.value = localStorage.getItem('last_joined_ip') || '';
+    }
+
+    if (btnHost) {
+        btnHost.addEventListener('click', () => {
+            initSocketConnection('http://localhost:3000');
+        });
+    }
+
+    if (btnJoin && ipInput) {
+        btnJoin.addEventListener('click', () => {
+            let rawIp = ipInput.value.trim();
+            if (!rawIp) {
+                alert('Wpisz IP Hosta (np. 192.168.1.15:3000)');
+                return;
+            }
+
+            if (!rawIp.startsWith('http://') && !rawIp.startsWith('https://')) {
+                rawIp = 'http://' + rawIp;
+            }
+
+            if (!rawIp.includes(':', 7)) {
+                rawIp += ':3000';
+            }
+
+            localStorage.setItem('last_joined_ip', ipInput.value.trim());
+            initSocketConnection(rawIp);
+            location.reload(); // Odświeżenie aplikacji z nowym połączeniem
+        });
+    }
+});
 //----------------------------------------------------------------------------------------//
 // ROZWIJANIE MENU NOWEGO ELEMENTU
 //----------------------------------------------------------------------------------------//

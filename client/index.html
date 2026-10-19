@@ -34,6 +34,31 @@
                 </div>
             </div>
 
+            <!-- ===== TUTAJ DODAJEMY SEKCJĘ HOST / JOIN ===== -->
+            <div class="connection-section" style="padding: 12px 16px; background: #202225; border-bottom: 1px solid #2f3136;">
+                <div style="font-size: 11px; font-weight: bold; color: #8e9297; text-transform: uppercase; margin-bottom: 6px;">Tryb połączenia LAN</div>
+                
+                <!-- Status połączenia -->
+                <div id="connection-status" style="font-size: 12px; color: #43b581; margin-bottom: 8px; font-weight: bold;">
+                    🟢 Tryb: Host (Lokalny)
+                </div>
+
+                <!-- Przyciski i pole do wpisywania IP -->
+                <div style="display: flex; gap: 6px; flex-direction: column;">
+                    <button id="btn-mode-host" style="background: #5865f2; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;">
+                        🏠 Hostuj sesję
+                    </button>
+
+                    <div style="display: flex; gap: 4px; margin-top: 2px;">
+                        <input type="text" id="join-ip-input" placeholder="IP Hosta (np. 192.168.1.15:3000)" style="flex: 1; padding: 6px; background: #36393f; border: 1px solid #484b52; color: white; border-radius: 4px; font-size: 11px;">
+                        <button id="btn-mode-join" style="background: #4f545c; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;">
+                            Dołącz
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <!-- ============================================== -->
+             
             <!-- Lista wszystkich otwartych plików / obiektów -->
             <div class="open-files-container">
                 <h3>Otwarte pliki</h3>
