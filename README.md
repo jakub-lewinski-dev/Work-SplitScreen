@@ -26,7 +26,7 @@ Wielofunkcyjne, kafelkowe środowisko robocze działające w przeglądarce, zapr
 ## 🚀 Uruchomienie Projektu
 
 ### Wymagania wstępne
-Upewnij się, że masz zainstalowany program **Node.js**[cite: 4] na swoim komputerze.
+Upewnij się, że masz zainstalowany program **Node.js** na swoim komputerze.
 
 ### Instrukcja krok po kroku
 
@@ -34,3 +34,4 @@ Upewnij się, że masz zainstalowany program **Node.js**[cite: 4] na swoim kompu
    ```bash
    git clone [https://github.com/TwojaNazwaUzytkownika/nazwa-repozytorium.git](https://github.com/TwojaNazwaUzytkownika/nazwa-repozytorium.git)
    cd nazwa-repozytorium
+   node server/server.js
