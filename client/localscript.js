@@ -1,9 +1,15 @@
 //----------------------------------------------------------------------------------------//
 // STAN APLIKACJI I DRZEWO UKŁADU
 //----------------------------------------------------------------------------------------//
+
 const fileContents = {};
+const fileTypes = {};
 let fileCounter = 1;
+let paintCounter = 1;
+let graphCounter = 1;
 let layoutTree = null;
+const mainContentEl = document.getElementById('main-content');
+const filesListEl = document.getElementById('files-list');
 
 // Inicjalizacja Socket.io (jeśli biblioteka jest dołączona w HTML)
 const socket = typeof io === 'function' ? io() : null;
@@ -28,8 +34,14 @@ if (socket) {
                 Math.min(selectionStart, content.length),
                 Math.min(selectionEnd, content.length)
             );
-            textarea.refreshHighlighting();
+            if (typeof textarea.refreshHighlighting === 'function') {
+                textarea.refreshHighlighting();
+            }
         });
+    });
+
+    socket.on('graph-content-change', ({ fileName, content }) => {
+        fileContents[fileName] = content;
     });
 
     socket.on('file-renamed', ({ oldName, newName }) => {
@@ -40,8 +52,9 @@ if (socket) {
 }
 
 //----------------------------------------------------------------------------------------//
-// ROZWIJANIE MENU NOWEGO ELEMENTU ORAZ PODPIĘCIE PRZYCISKÓW
+// ROZWIJANIE MENU NOWEGO ELEMENTU
 //----------------------------------------------------------------------------------------//
+
 function toggleNewItemMenu() {
     const menu = document.getElementById('new-item-menu');
     if (menu) menu.classList.toggle('show');
@@ -55,26 +68,72 @@ window.addEventListener('click', (e) => {
     }
 });
 
-// Automatyczne podpięcie zdarzenia do przycisku tworzenia pliku w menu
-document.addEventListener('DOMContentLoaded', () => {
-    const createTextFileBtn = document.getElementById('create-text-file-btn');
-    if (createTextFileBtn) {
-        createTextFileBtn.addEventListener('click', () => {
-            createTextEditorFile();
-        });
-    }
-});
 
 //----------------------------------------------------------------------------------------//
 // TWORZENIE NOWEGO PLIKU (LISTA BOCZNA)
 //----------------------------------------------------------------------------------------//
+
 function createTextEditorFile() {
     const fileName = `Notatka_${fileCounter}.txt`;
     fileCounter++;
+    fileTypes[fileName] = 'text';
     fileContents[fileName] = "";
 
     const openFile = (name) => {
         if (!fileContents.hasOwnProperty(name)) fileContents[name] = "";
+        fileTypes[name] = 'text';
+        addOpenFile(name);
+    };
+
+    if (socket) {
+        socket.emit('open-file', fileName, openFile);
+    } else {
+        openFile(fileName);
+    }
+
+    const menu = document.getElementById('new-item-menu');
+    if (menu) menu.classList.remove('show');
+}
+
+function createPaintFile() {
+    const fileName = `Rysunek_${paintCounter}.png`;
+    paintCounter++;
+    fileTypes[fileName] = 'paint';
+    fileContents[fileName] = "";
+
+    const openFile = (name) => {
+        if (!fileContents.hasOwnProperty(name)) fileContents[name] = "";
+        fileTypes[name] = 'paint';
+        addOpenFile(name);
+    };
+
+    if (socket) {
+        socket.emit('open-file', fileName, openFile);
+    } else {
+        openFile(fileName);
+    }
+
+    const menu = document.getElementById('new-item-menu');
+    if (menu) menu.classList.remove('show');
+}
+
+//----------------------------------------------------------------------------------------//
+// TWORZENIE PLIKU WYKRESU
+//----------------------------------------------------------------------------------------//
+
+function createGraphFile() {
+    const fileName = `Wykres_${graphCounter}.graph`;
+    graphCounter++;
+
+    fileTypes[fileName] = 'graph';
+    fileContents[fileName] = '';
+
+    const openFile = (name) => {
+        if (!fileContents.hasOwnProperty(name)) {
+            fileContents[name] = '';
+        }
+
+        fileTypes[name] = 'graph';
         addOpenFile(name);
     };
 
@@ -90,6 +149,14 @@ function createTextEditorFile() {
 
 function addSyncedFile(fileName, content = '') {
     if (!fileContents.hasOwnProperty(fileName)) fileContents[fileName] = content;
+    // Domyślnie pliki z synchronizacji traktujemy jako tekst, chyba że rozszerzenie wskazuje inaczej
+    if (fileName.endsWith('.png')) {
+        fileTypes[fileName] = 'paint';
+    } else if (fileName.endsWith('.graph')) {
+        fileTypes[fileName] = 'graph';
+    } else {
+        fileTypes[fileName] = 'text';
+    }
     addOpenFile(fileName);
 }
 
@@ -98,6 +165,9 @@ function applyFileRename(oldName, newName) {
 
     fileContents[newName] = fileContents[oldName];
     delete fileContents[oldName];
+
+    fileTypes[newName] = fileTypes[oldName];
+    delete fileTypes[oldName];
 
     const fileItem = Array.from(document.querySelectorAll('.file-item'))
         .find((item) => item.dataset.filename === oldName);
@@ -121,6 +191,7 @@ function applyFileRename(oldName, newName) {
 
 function removeFileEverywhere(fileName) {
     delete fileContents[fileName];
+    delete fileTypes[fileName];
     removeFileFromLayout(fileName);
 
     const fileItem = Array.from(document.querySelectorAll('.file-item'))
@@ -139,7 +210,6 @@ function addOpenFile(fileName) {
     li.className = 'file-item';
     li.dataset.filename = fileName;
     li.draggable = true;
-
     li.innerHTML = `
         <span class="file-name" title="Kliknij dwukrotnie, aby zmienić nazwę">${fileName}</span>
         <div class="file-actions">
@@ -148,7 +218,7 @@ function addOpenFile(fileName) {
             <button class="close-file" title="Zamknij z listy">✕</button>
         </div>
     `;
-    
+
     li.addEventListener('dragstart', (e) => {
         if (li.querySelector('.file-name').isContentEditable) {
             e.preventDefault();
@@ -164,20 +234,21 @@ function addOpenFile(fileName) {
 //----------------------------------------------------------------------------------------//
 // LOGIKA ZARZĄDZANIA DRZEWEM I LIMITAMI SIATKI (MAX 2x2)
 //----------------------------------------------------------------------------------------//
+
 function findNodeAndParent(tree, fileName, parent = null, childIndex = -1) {
     if (!tree) return null;
-    
+
     if (tree.type === 'leaf' && tree.content === fileName) {
         return { node: tree, parent, childIndex };
     }
-    
+
     if (tree.type === 'container') {
         for (let i = 0; i < tree.children.length; i++) {
             const result = findNodeAndParent(tree.children[i], fileName, tree, i);
             if (result) return result;
         }
     }
-    
+
     return null;
 }
 
@@ -187,6 +258,7 @@ function canSplit(targetFileName, position) {
 
     const found = findNodeAndParent(layoutTree, targetFileName);
     if (!found) return false;
+
     const { parent } = found;
 
     if (layoutTree.direction === 'row') {
@@ -266,6 +338,7 @@ function handleDropOnPane(targetFileName, draggedFileName, position) {
 //----------------------------------------------------------------------------------------//
 // RENDEROWANIE OBSZARU ROBOCZEGO Z SUWAKAMI
 //----------------------------------------------------------------------------------------//
+
 function renderWorkspace() {
     const mainContent = document.getElementById('main-content');
     if (!mainContent) return;
@@ -300,7 +373,7 @@ function renderNode(node) {
         container.style.height = '100%';
         container.style.position = 'relative';
         container.style.overflow = 'hidden';
-        
+
         const isRow = node.direction === 'row';
         container.style.flexDirection = isRow ? 'row' : 'column';
 
@@ -318,7 +391,7 @@ function renderNode(node) {
         const splitter = document.createElement('div');
         splitter.className = 'workspace-splitter';
         splitter.style.zIndex = '10';
-        
+
         if (isRow) {
             splitter.style.width = '8px';
             splitter.style.height = '100%';
@@ -358,6 +431,7 @@ function renderNode(node) {
 
                 const newP1 = (node.splitRatio * 100).toFixed(2) + '%';
                 const newP2 = ((1 - node.splitRatio) * 100).toFixed(2) + '%';
+
                 child1El.style.flex = `0 0 ${newP1}`;
                 child2El.style.flex = `0 0 ${newP2}`;
             }
@@ -379,10 +453,9 @@ function renderNode(node) {
     }
 }
 
-//----------------------------------------------------------------------------------------//
-// TWORZENIE PANELU EDYTORA
-//----------------------------------------------------------------------------------------//
 function createPaneElement(fileName) {
+    const type = fileTypes[fileName] || 'text';
+
     const pane = document.createElement('div');
     pane.className = 'editor-pane';
     pane.style.display = 'flex';
@@ -391,28 +464,57 @@ function createPaneElement(fileName) {
     pane.style.border = '1px solid #202225';
     pane.style.overflow = 'hidden';
     pane.style.boxSizing = 'border-box';
-    
+
+    let innerContent = '';
+    let icon = '🗂️';
+
+    if (type === 'paint') {
+        icon = '🎨';
+    } else if (type === 'graph') {
+        icon = '📈';
+    }
+    if (type === 'text') {
+        innerContent = `<textarea class="pane-textarea" spellcheck="false"></textarea>`;
+    } else if (type === 'paint') {
+        innerContent = `
+            <div class="paint-canvas-container" style="flex: 1; display: flex; align-items: center; justify-content: center; background-color: #36393f; overflow: auto; position: relative;">
+                <!-- Tutaj JavaScript wstrzyknie canvas -->
+            </div>
+        `;
+    } else if (type === 'graph') {
+        innerContent = `
+            <div class="graph-container"
+                style="flex: 1; min-height: 0; overflow: hidden;">
+            </div>
+        `;
+    }
+
     pane.innerHTML = `
         <div class="editor-top-bar" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; background-color: #2f3136; border-bottom: 1px solid #202225; font-size: 14px; font-weight: bold; color: #dcddde;">
-            <span>🗂️ ${fileName}</span>
+            <span>${icon} ${fileName}</span>
             <div style="display: flex; gap: 6px; align-items: center;">
                 <button class="maximize-pane-btn" title="Ustaw na pełny ekran" style="background: transparent; border: none; color: #8e9297; cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: 4px;">▢</button>
                 <button class="close-pane-btn" title="Zamknij ten panel" style="background: transparent; border: none; color: #8e9297; cursor: pointer; font-size: 14px; padding: 2px 6px; border-radius: 4px;">✕</button>
             </div>
         </div>
-        <textarea class="pane-textarea" spellcheck="false"></textarea>
+        ${innerContent}
     `;
 
-    const textarea = pane.querySelector('.pane-textarea');
-    textarea.dataset.filename = fileName;
-    textarea.value = fileContents[fileName] || "";
+    if (type === 'text') {
+        const textarea = pane.querySelector('.pane-textarea');
+        textarea.dataset.filename = fileName;
+        textarea.value = fileContents[fileName] || "";
+        initHighlighting(pane, textarea);
 
-    initHighlighting(pane, textarea);
-
-    textarea.addEventListener('input', (e) => {
-        fileContents[fileName] = e.target.value;
-        if (socket) socket.emit('file-content-change', { fileName, content: e.target.value });
-    });
+        textarea.addEventListener('input', (e) => {
+            fileContents[fileName] = e.target.value;
+            if (socket) socket.emit('file-content-change', { fileName, content: e.target.value });
+        });
+    } else if (type === 'paint') {
+        initPaint(pane, fileName);
+    } else if (type === 'graph') {
+        initGraph(pane, fileName);
+    }
 
     pane.querySelector('.maximize-pane-btn').addEventListener('click', () => {
         layoutTree = { type: 'leaf', content: fileName };
@@ -437,10 +539,10 @@ function createPaneElement(fileName) {
         const y = e.clientY - rect.top;
         const w = rect.width;
         const h = rect.height;
+        const edgeRatio = 0.25;
 
-        const edgeRatio = 0.25; 
         let position = 'center';
-        
+
         if (x < w * edgeRatio) position = 'left';
         else if (x > w * (1 - edgeRatio)) position = 'right';
         else if (y < h * edgeRatio) position = 'top';
@@ -452,13 +554,14 @@ function createPaneElement(fileName) {
     return pane;
 }
 
-const mainContentEl = document.getElementById('main-content');
 if (mainContentEl) {
     mainContentEl.addEventListener('dragover', (e) => e.preventDefault());
     mainContentEl.addEventListener('drop', (e) => {
         e.preventDefault();
+
         if (!layoutTree) {
             const draggedFileName = e.dataTransfer.getData('text/plain');
+
             if (draggedFileName) {
                 layoutTree = { type: 'leaf', content: draggedFileName };
                 renderWorkspace();
@@ -470,7 +573,7 @@ if (mainContentEl) {
 //----------------------------------------------------------------------------------------//
 // OBSŁUGA KLIKNIĘĆ NA LIŚCIE PLIKÓW
 //----------------------------------------------------------------------------------------//
-const filesListEl = document.getElementById('files-list');
+
 if (filesListEl) {
     filesListEl.addEventListener('dblclick', (e) => {
         if (e.target.classList.contains('file-name')) {
@@ -499,11 +602,11 @@ if (filesListEl) {
 
         if (e.target.classList.contains('close-file') || e.target.closest('.close-file')) {
             delete fileContents[fileName];
+            delete fileTypes[fileName];
             removeFileFromLayout(fileName);
             fileItem.remove();
             renderWorkspace();
-            
-            // Wysyłamy informację do serwera, aby usunąć plik u wszystkich
+
             if (socket) {
                 socket.emit('delete-file', fileName);
             }
@@ -515,14 +618,15 @@ if (filesListEl) {
 function startRenaming(fileItem) {
     const nameSpan = fileItem.querySelector('.file-name');
     const oldName = fileItem.dataset.filename;
-    
+
     if (nameSpan.isContentEditable) return;
 
     nameSpan.contentEditable = true;
     nameSpan.focus();
-    
+
     const range = document.createRange();
     range.selectNodeContents(nameSpan);
+
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
@@ -538,35 +642,73 @@ function startRenaming(fileItem) {
 
     function finishRenaming() {
         cleanup();
+
         const newName = nameSpan.textContent.trim();
-        
+
         if (newName && newName !== oldName) {
             if (fileContents.hasOwnProperty(newName)) {
                 alert('Plik o takiej nazwie już istnieje!');
                 nameSpan.textContent = oldName;
             } else {
-                fileContents[newName] = fileContents[oldName];
-                delete fileContents[oldName];
-
-                fileItem.dataset.filename = newName;
-
-                function renameInTree(node) {
-                    if (!node) return;
-                    if (node.type === 'leaf' && node.content === oldName) {
-                        node.content = newName;
-                    } else if (node.type === 'container') {
-                        renameInTree(node.children[0]);
-                        renameInTree(node.children[1]);
-                    }
+                // Jeśli jesteśmy połączeni z serwerem, wysyłamy żądanie zmiany nazwy
+                if (socket) {
+                    socket.emit('rename-file', { oldName, newName }, (success) => {
+                        if (success) {
+                            // Jeśli serwer zatwierdził zmianę, aktualizujemy stan lokalny
+                            applyFileRenameLocal(oldName, newName);
+                        } else {
+                            alert('Serwer odrzucił zmianę nazwy (plik o tej nazwie już istnieje).');
+                            nameSpan.textContent = oldName;
+                        }
+                    });
+                } else {
+                    // Tryb offline / bez socketa
+                    applyFileRenameLocal(oldName, newName);
                 }
-                renameInTree(layoutTree);
-                
-                renderWorkspace();
             }
         } else {
             nameSpan.textContent = oldName;
         }
     }
+
+    function applyFileRenameLocal(oldName, newName) {
+        fileContents[newName] = fileContents[oldName];
+        delete fileContents[oldName];
+
+        fileTypes[newName] = fileTypes[oldName];
+        delete fileTypes[oldName];
+
+        fileItem.dataset.filename = newName;
+
+        function renameInTree(node) {
+            if (!node) return;
+
+            if (node.type === 'leaf' && node.content === oldName) {
+                node.content = newName;
+            } else if (node.type === 'container') {
+                renameInTree(node.children[0]);
+                renameInTree(node.children[1]);
+            }
+        }
+
+        renameInTree(layoutTree);
+        renderWorkspace();
+    }
+
+    function cancelRenaming() {
+        cleanup();
+        nameSpan.textContent = oldName;
+    }
+
+    function cleanup() {
+        nameSpan.contentEditable = false;
+        nameSpan.removeEventListener('keydown', onKeyDown);
+        nameSpan.removeEventListener('blur', finishRenaming);
+        window.getSelection().removeAllRanges();
+    }
+
+    nameSpan.addEventListener('keydown', onKeyDown);
+    nameSpan.addEventListener('blur', finishRenaming);
 
     function cancelRenaming() {
         cleanup();
@@ -587,11 +729,14 @@ function startRenaming(fileItem) {
 function updateActiveHighlights() {
     function getActiveFiles(node, set = new Set()) {
         if (!node) return set;
+
         if (node.type === 'leaf') set.add(node.content);
+
         if (node.type === 'container') {
             getActiveFiles(node.children[0], set);
             getActiveFiles(node.children[1], set);
         }
+
         return set;
     }
 
@@ -599,6 +744,7 @@ function updateActiveHighlights() {
 
     document.querySelectorAll('.file-item').forEach(item => {
         const name = item.dataset.filename;
+
         if (activeFiles.has(name)) {
             item.classList.add('active');
         } else {
@@ -608,8 +754,527 @@ function updateActiveHighlights() {
 }
 
 //----------------------------------------------------------------------------------------//
-// FUNKCJA PODŚWIETLANJA HASEŁ I SYMBOLI (SYNTAX HIGHLIGHTER)
+// FUNKCJA ZAPISU PLIKU NA DYSK (Tekst + Paint)
 //----------------------------------------------------------------------------------------//
+
+async function saveFileToDisk(fileName) {
+    const content = fileContents[fileName] || "";
+    const isPaint = fileTypes[fileName] === 'paint';
+
+    const extension = isPaint ? '.png' : '';
+    const suggestedName = isPaint
+        ? (fileName.toLowerCase().endsWith('.png') ? fileName : fileName + extension)
+        : fileName;
+
+    let blob;
+
+    if (isPaint) {
+        const response = await fetch(content);
+        blob = await response.blob();
+    } else {
+        blob = new Blob([content], {
+            type: 'text/plain;charset=utf-8'
+        });
+    }
+
+    if ('showSaveFilePicker' in window) {
+        try {
+            const options = isPaint
+                ? {
+                    suggestedName,
+                    types: [{
+                        description: 'Obraz PNG',
+                        accept: { 'image/png': ['.png'] }
+                    }]
+                }
+                : {
+                    suggestedName,
+                    types: [{
+                        description: 'Pliki tekstowe',
+                        accept: {
+                            'text/plain': ['.txt', '.js', '.html', '.md']
+                        }
+                    }]
+                };
+
+            const handle = await window.showSaveFilePicker(options);
+            const writable = await handle.createWritable();
+
+            await writable.write(blob);
+            await writable.close();
+
+            return;
+        } catch (err) {
+            if (err.name === 'AbortError') return;
+
+            console.error('Błąd zapisu pliku:', err);
+        }
+    }
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+
+    a.href = url;
+    a.download = suggestedName;
+
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+//----------------------------------------------------------------------------------------//
+// INICJALIZACJA EDYTORA GRAFICZNEGO (ZOOM + PAN + RYSOWANIE)
+//----------------------------------------------------------------------------------------//
+
+function initPaint(pane, fileName) {
+    const container = pane.querySelector('.paint-canvas-container');
+    if (!container) return;
+
+    container.style.position = 'relative';
+    container.style.overflow = 'hidden';
+
+    container.innerHTML = `
+        <canvas class="pane-canvas" style="
+            background: #36393f;
+            cursor: crosshair;
+            width: 100%;
+            height: 100%;
+            display: block;
+            position: absolute;
+            inset: 0;
+        "></canvas>
+
+        <div class="paint-toolbar" style="
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            max-width: calc(100% - 20px);
+            padding: 10px 12px;
+            background: #202225;
+            border: 1px solid #484b52;
+            border-radius: 10px;
+            color: #ffffff;
+            font: 13px Arial, sans-serif;
+            box-sizing: border-box;
+        ">
+            <div class="paint-colors" style="
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex-wrap: wrap;
+                gap: 5px;
+            ">
+                <button type="button" data-color="#000000" title="Czarny"></button>
+                <button type="button" data-color="#ffffff" title="Biały"></button>
+                <button type="button" data-color="#ff0000" title="Czerwony"></button>
+                <button type="button" data-color="#ff8800" title="Pomarańczowy"></button>
+                <button type="button" data-color="#ffff00" title="Żółty"></button>
+                <button type="button" data-color="#00cc44" title="Zielony"></button>
+                <button type="button" data-color="#00ccff" title="Błękitny"></button>
+                <button type="button" data-color="#0066ff" title="Niebieski"></button>
+                <button type="button" data-color="#8800ff" title="Fioletowy"></button>
+                <button type="button" data-color="#ff66cc" title="Różowy"></button>
+                <button type="button" data-color="#964b00" title="Brązowy"></button>
+                <button type="button" data-color="#808080" title="Szary"></button>
+            </div>
+
+            <input type="color" class="paint-color-picker"
+                value="#000000" title="Wybierz dowolny kolor"
+                style="
+                    width: 30px;
+                    height: 30px;
+                    padding: 2px;
+                    cursor: pointer;
+                    border: 1px solid #666;
+                    border-radius: 5px;
+                    background: #36393f;
+                ">
+
+            <div style="width: 1px; height: 25px; background: #484b52;"></div>
+
+            <button type="button" class="paint-tool-brush"
+                title="Pędzel" style="
+                    padding: 7px 10px;
+                    cursor: pointer;
+                    border: 1px solid #5865f2;
+                    border-radius: 5px;
+                    background: #5865f2;
+                    color: white;
+                ">✎ Pędzel</button>
+
+            <button type="button" class="paint-tool-eraser"
+                title="Gumka" style="
+                    padding: 7px 10px;
+                    cursor: pointer;
+                    border: 1px solid #484b52;
+                    border-radius: 5px;
+                    background: #36393f;
+                    color: white;
+                ">▱ Gumka</button>
+
+            <div style="width: 1px; height: 25px; background: #484b52;"></div>
+
+            <button type="button" class="paint-size-minus"
+                title="Zmniejsz pędzel" style="
+                    width: 28px;
+                    height: 28px;
+                    cursor: pointer;
+                    border: 1px solid #484b52;
+                    border-radius: 5px;
+                    background: #36393f;
+                    color: white;
+                    font-size: 18px;
+                ">−</button>
+
+            <input type="range" class="paint-size-slider"
+                min="1" max="50" value="2" step="1"
+                title="Rozmiar narzędzia"
+                style="width: 85px; cursor: pointer;">
+
+            <button type="button" class="paint-size-plus"
+                title="Zwiększ pędzel" style="
+                    width: 28px;
+                    height: 28px;
+                    cursor: pointer;
+                    border: 1px solid #484b52;
+                    border-radius: 5px;
+                    background: #36393f;
+                    color: white;
+                    font-size: 18px;
+                ">+</button>
+
+            <span class="paint-size-label"
+                style="min-width: 35px; text-align: center;">2 px</span>
+        </div>
+    `;
+
+    const canvas = container.querySelector('.pane-canvas');
+    const ctx = canvas.getContext('2d');
+
+    const toolbar = container.querySelector('.paint-toolbar');
+    const colorButtons = toolbar.querySelectorAll('[data-color]');
+    const colorPicker = toolbar.querySelector('.paint-color-picker');
+    const brushButton = toolbar.querySelector('.paint-tool-brush');
+    const eraserButton = toolbar.querySelector('.paint-tool-eraser');
+    const sizeSlider = toolbar.querySelector('.paint-size-slider');
+    const sizeMinus = toolbar.querySelector('.paint-size-minus');
+    const sizePlus = toolbar.querySelector('.paint-size-plus');
+    const sizeLabel = toolbar.querySelector('.paint-size-label');
+
+    canvas.width = container.clientWidth || 800;
+    canvas.height = container.clientHeight || 600;
+
+    const bufferCanvas = document.createElement('canvas');
+    bufferCanvas.width = 2000;
+    bufferCanvas.height = 1400;
+
+    const bufferCtx = bufferCanvas.getContext('2d');
+
+    bufferCtx.fillStyle = '#ffffff';
+    bufferCtx.fillRect(0, 0, bufferCanvas.width, bufferCanvas.height);
+
+    if (fileContents[fileName]) {
+        const savedImage = new Image();
+
+        savedImage.onload = () => {
+            bufferCtx.clearRect(0, 0, bufferCanvas.width, bufferCanvas.height);
+            bufferCtx.drawImage(savedImage, 0, 0);
+            redraw();
+        };
+
+        savedImage.src = fileContents[fileName];
+    }
+
+    // Natychmiastowa synchronizacja rysunku od innych użytkowników w czasie rzeczywistym
+    if (socket) {
+        const handleRemotePaintChange = ({ fileName: changedFile, content }) => {
+            if (changedFile === fileName && content) {
+                fileContents[fileName] = content;
+                const remoteImage = new Image();
+                remoteImage.onload = () => {
+                    bufferCtx.clearRect(0, 0, bufferCanvas.width, bufferCanvas.height);
+                    bufferCtx.drawImage(remoteImage, 0, 0);
+                    redraw();
+                };
+                remoteImage.src = content;
+            }
+        };
+
+        socket.on('file-content-change', handleRemotePaintChange);
+
+        // Opcjonalne czyszczenie nasłuchiwania przy zamykaniu panelu (zapobiega wyciekom pamięci)
+        pane.querySelector('.close-pane-btn').addEventListener('click', () => {
+            socket.off('file-content-change', handleRemotePaintChange);
+        }, { once: true });
+    }
+
+    let scale = 1;
+    let offsetX = (canvas.width - bufferCanvas.width) / 2;
+    let offsetY = (canvas.height - bufferCanvas.height) / 2;
+
+    let isDrawing = false;
+    let isPanning = false;
+
+    let startX = 0;
+    let startY = 0;
+    let lastX = 0;
+    let lastY = 0;
+
+    let brushColor = '#000000';
+    let brushSize = 2;
+    let activeTool = 'brush';
+
+    function updateToolbar() {
+        colorButtons.forEach(button => {
+            const selected = button.dataset.color === brushColor;
+
+            button.style.width = '21px';
+            button.style.height = '21px';
+            button.style.padding = '0';
+            button.style.cursor = 'pointer';
+            button.style.borderRadius = '50%';
+            button.style.background = button.dataset.color;
+            button.style.border = selected
+                ? '3px solid #5865f2'
+                : '2px solid #777';
+            button.style.boxShadow = selected
+                ? '0 0 0 1px white'
+                : 'none';
+        });
+
+        colorPicker.value = brushColor;
+
+        brushButton.style.background =
+            activeTool === 'brush' ? '#5865f2' : '#36393f';
+
+        brushButton.style.borderColor =
+            activeTool === 'brush' ? '#5865f2' : '#484b52';
+
+        eraserButton.style.background =
+            activeTool === 'eraser' ? '#5865f2' : '#36393f';
+
+        eraserButton.style.borderColor =
+            activeTool === 'eraser' ? '#5865f2' : '#484b52';
+
+        sizeSlider.value = brushSize;
+        sizeLabel.textContent = `${brushSize} px`;
+    }
+
+    function saveDrawing() {
+        const dataUrl = bufferCanvas.toDataURL('image/png');
+        fileContents[fileName] = dataUrl;
+        if (socket) {
+            socket.emit('file-content-change', { fileName, content: dataUrl });
+        }
+    }
+
+    function redraw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.translate(offsetX, offsetY);
+        ctx.scale(scale, scale);
+        ctx.drawImage(bufferCanvas, 0, 0);
+        ctx.restore();
+    }
+
+    colorButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            brushColor = button.dataset.color;
+            activeTool = 'brush';
+            updateToolbar();
+        });
+    });
+
+    colorPicker.addEventListener('input', () => {
+        brushColor = colorPicker.value;
+        activeTool = 'brush';
+        updateToolbar();
+    });
+
+    brushButton.addEventListener('click', () => {
+        activeTool = 'brush';
+        updateToolbar();
+    });
+
+    eraserButton.addEventListener('click', () => {
+        activeTool = 'eraser';
+        updateToolbar();
+    });
+
+    function setBrushSize(size) {
+        brushSize = Math.max(1, Math.min(50, size));
+        updateToolbar();
+    }
+
+    sizeMinus.addEventListener('click', () => {
+        setBrushSize(brushSize - 1);
+    });
+
+    sizePlus.addEventListener('click', () => {
+        setBrushSize(brushSize + 1);
+    });
+
+    sizeSlider.addEventListener('input', () => {
+        setBrushSize(Number(sizeSlider.value));
+    });
+
+    updateToolbar();
+
+    const resizeObserver = new ResizeObserver(() => {
+        if (!container.clientWidth || !container.clientHeight) return;
+
+        const oldWidth = canvas.width;
+        const oldHeight = canvas.height;
+
+        const centerX = (oldWidth / 2 - offsetX) / scale;
+        const centerY = (oldHeight / 2 - offsetY) / scale;
+
+        canvas.width = container.clientWidth;
+        canvas.height = container.clientHeight;
+
+        offsetX = canvas.width / 2 - centerX * scale;
+        offsetY = canvas.height / 2 - centerY * scale;
+
+        redraw();
+    });
+
+    resizeObserver.observe(container);
+
+    canvas.addEventListener('contextmenu', e => {
+        e.preventDefault();
+    });
+
+    canvas.addEventListener('mousedown', e => {
+        const rect = canvas.getBoundingClientRect();
+
+        const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+        const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+        if (e.button === 2) {
+            isPanning = true;
+
+            startX = mouseX - offsetX;
+            startY = mouseY - offsetY;
+
+            canvas.style.cursor = 'grabbing';
+            e.preventDefault();
+        } else if (e.button === 0) {
+            const bufferX = (mouseX - offsetX) / scale;
+            const bufferY = (mouseY - offsetY) / scale;
+
+            if (
+                bufferX < 0 ||
+                bufferY < 0 ||
+                bufferX >= bufferCanvas.width ||
+                bufferY >= bufferCanvas.height
+            ) {
+                return;
+            }
+
+            isDrawing = true;
+            lastX = bufferX;
+            lastY = bufferY;
+
+            bufferCtx.beginPath();
+            bufferCtx.arc(
+                bufferX,
+                bufferY,
+                brushSize / 2,
+                0,
+                Math.PI * 2
+            );
+
+            bufferCtx.fillStyle =
+                activeTool === 'eraser' ? '#ffffff' : brushColor;
+
+            bufferCtx.fill();
+
+            redraw();
+        }
+    });
+
+    canvas.addEventListener('mousemove', e => {
+        const rect = canvas.getBoundingClientRect();
+
+        const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+        const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+        if (isPanning) {
+            offsetX = mouseX - startX;
+            offsetY = mouseY - startY;
+
+            redraw();
+        } else if (isDrawing) {
+            const bufferX = (mouseX - offsetX) / scale;
+            const bufferY = (mouseY - offsetY) / scale;
+
+            bufferCtx.beginPath();
+            bufferCtx.moveTo(lastX, lastY);
+            bufferCtx.lineTo(bufferX, bufferY);
+
+            bufferCtx.strokeStyle =
+                activeTool === 'eraser' ? '#ffffff' : brushColor;
+
+            bufferCtx.lineWidth = brushSize;
+            bufferCtx.lineCap = 'round';
+            bufferCtx.lineJoin = 'round';
+            bufferCtx.stroke();
+
+            lastX = bufferX;
+            lastY = bufferY;
+
+            redraw();
+        }
+    });
+
+    window.addEventListener('mouseup', e => {
+        if (e.button === 2) {
+            isPanning = false;
+            canvas.style.cursor = 'crosshair';
+        }
+
+        if (e.button === 0 && isDrawing) {
+            isDrawing = false;
+            saveDrawing();
+        }
+    });
+
+    canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+
+        const rect = canvas.getBoundingClientRect();
+
+        const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+        const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+        const zoomFactor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+        let newScale = scale * zoomFactor;
+
+        newScale = Math.max(0.1, Math.min(10, newScale));
+
+        offsetX = mouseX - (mouseX - offsetX) * (newScale / scale);
+        offsetY = mouseY - (mouseY - offsetY) * (newScale / scale);
+
+        scale = newScale;
+
+        redraw();
+    }, { passive: false });
+}
+
+//----------------------------------------------------------------------------------------//
+// FUNKCJA PODŚWIETLANIA HASEŁ I SYMBOLI (SYNTAX HIGHLIGHTER)
+//----------------------------------------------------------------------------------------//
+
 function applySyntaxHighlighting(textarea, highlightDiv) {
     let text = textarea.value;
 
@@ -666,10 +1331,10 @@ function applySyntaxHighlighting(textarea, highlightDiv) {
 function initHighlighting(pane, textarea) {
     const highlightDiv = document.createElement('div');
     highlightDiv.className = 'code-highlight';
-    
+
     const wrapper = document.createElement('div');
     wrapper.className = 'editor-container';
-    
+
     textarea.parentNode.replaceChild(wrapper, textarea);
     wrapper.appendChild(highlightDiv);
     wrapper.appendChild(textarea);
@@ -685,40 +1350,1364 @@ function initHighlighting(pane, textarea) {
     textarea.refreshHighlighting();
 }
 
-//----------------------------------------------------------------------------------------//
-// FUNKCJA ZAPISU PLIKU NA DYSK (Natywne okno systemu)
-//----------------------------------------------------------------------------------------//
-async function saveFileToDisk(fileName) {
-    const content = fileContents[fileName] || "";
+//-----------------------------------Kocia łapka------------------//
 
-    if ('showSaveFilePicker' in window) {
-        try {
-            const options = {
-                suggestedName: fileName,
-                types: [{
-                    description: 'Pliki tekstowe',
-                    accept: { 'text/plain': ['.txt', '.js', '.html', '.md'] },
-                }],
-            };
+const workspaceTitle = document.getElementById("workspaceTitle");
 
-            const handle = await window.showSaveFilePicker(options);
-            const writable = await handle.createWritable();
-            await writable.write(content);
-            await writable.close();
+if (workspaceTitle) {
+    const catPaw = document.createElement("img");
+    catPaw.id = "catPawAnimation";
+    catPaw.src = "../cat/cat-paw1.png";
+    catPaw.alt = "";
+    document.body.appendChild(catPaw);
+
+    let pawAnimationFrame = null;
+    let pawWalkTimeout = null;
+    let catWalkStarted = false;
+
+    workspaceTitle.addEventListener("click", function(event) {
+        if (pawAnimationFrame !== null || catWalkStarted === true) {
             return;
-        } catch (err) {
-            if (err.name === 'AbortError') return;
-            console.error("Błąd zapisu przez File System Access:", err);
+        }
+
+        const startX = -75;
+        const startY = -75;
+        const targetX = event.clientX;
+        const targetY = event.clientY;
+
+        const startTime = performance.now();
+        const attackDuration = 500;
+        const returnDuration = 500;
+        const pauseDuration = 90;
+
+        catPaw.style.opacity = "1";
+
+        function animate(now) {
+            const elapsed = now - startTime;
+            catPaw.style.display = "block";
+            let x, y, scale;
+
+            if (elapsed < attackDuration) {
+                const t = elapsed / attackDuration;
+                const progress = t * t * t;
+
+                x = startX + (targetX - startX) * progress;
+                y = startY + (targetY - startY) * progress;
+                scale = 1 + 0.15 * progress;
+            } else if (elapsed < attackDuration + pauseDuration) {
+                x = targetX;
+                y = targetY;
+                scale = 1.15;
+            } else if (elapsed < attackDuration + pauseDuration + returnDuration) {
+                const t = (elapsed - attackDuration - pauseDuration) / returnDuration;
+                const progress = t * t * t;
+
+                x = targetX + (startX - targetX) * progress;
+                y = targetY + (startY - targetY) * progress;
+                scale = 1.15 * (1 - progress);
+            } else {
+                catPaw.style.opacity = "0";
+                catPaw.style.left = startX + "px";
+                catPaw.style.top = startY + "px";
+                catPaw.style.transform = "scale(1)";
+                pawAnimationFrame = null;
+                return;
+            }
+
+            catPaw.style.left = x + "px";
+            catPaw.style.top = y + "px";
+            catPaw.style.transform = `translate(-50%, -50%) scale(${scale})`;
+
+            pawAnimationFrame = requestAnimationFrame(animate);
+        }
+
+        catPaw.style.left = startX + "px";
+        catPaw.style.top = startY + "px";
+        catPaw.style.transform = "translate(-50%, -50%) scale(1)";
+
+        pawAnimationFrame = requestAnimationFrame(animate);
+    });
+
+    catPaw.addEventListener("click", function(event) {
+        event.stopPropagation();
+
+        if (pawAnimationFrame !== null) {
+            cancelAnimationFrame(pawAnimationFrame);
+            pawAnimationFrame = null;
+        }
+
+        if (pawWalkTimeout !== null) {
+            clearTimeout(pawWalkTimeout);
+            pawWalkTimeout = null;
+        }
+
+        const currentX = parseFloat(catPaw.style.left) || -59;
+        const currentY = parseFloat(catPaw.style.top) || -59;
+
+        catPaw.src = "../cat/cat-paw2.png";
+        catPaw.style.opacity = "1";
+
+        const startX = -59;
+        const startY = -59;
+
+        let dx = currentX + 59 - event.clientX;
+        let dy = currentY + 59 - event.clientY;
+
+        const distance = Math.hypot(dx, dy) || 1;
+
+        dx = dx / distance * 10;
+        dy = dy / distance * 10;
+
+        const recoilX = currentX + dx;
+        const recoilY = currentY + dy;
+
+        const recoilDuration = 180;
+        const pauseDuration = 350;
+        const returnDuration = 650;
+
+        const animationStart = performance.now();
+
+        function animatePaw(now) {
+            const elapsed = now - animationStart;
+            let x, y;
+
+            if (elapsed < recoilDuration) {
+                const t = elapsed / recoilDuration;
+                const progress = 1 - Math.pow(1 - t, 3);
+
+                x = currentX + (recoilX - currentX) * progress;
+                y = currentY + (recoilY - currentY) * progress;
+            } else if (elapsed < recoilDuration + pauseDuration) {
+                x = recoilX;
+                y = recoilY;
+            } else if (elapsed < recoilDuration + pauseDuration + returnDuration) {
+                const t = (elapsed - recoilDuration - pauseDuration) / returnDuration;
+                const progress = t * t;
+
+                x = recoilX + (startX - recoilX) * progress;
+                y = recoilY + (startY - recoilY) * progress;
+            } else {
+                catPaw.style.opacity = "0";
+                catPaw.style.left = startX + "px";
+                catPaw.style.top = startY + "px";
+                pawAnimationFrame = null;
+
+                pawWalkTimeout = setTimeout(function() {
+                    pawWalkTimeout = null;
+                    catWalkStarted = true;
+
+                    if (typeof catWalkIn === "function") {
+                        catWalkIn();
+                    }
+                }, 400);
+
+                return;
+            }
+
+            catPaw.style.left = x + "px";
+            catPaw.style.top = y + "px";
+
+            pawAnimationFrame = requestAnimationFrame(animatePaw);
+        }
+
+        pawAnimationFrame = requestAnimationFrame(animatePaw);
+    });
+}
+
+//-----------------------------------Chodzenie kota------------------//
+
+const catCharacter = document.createElement("img");
+catCharacter.id = "catCharacter";
+catCharacter.alt = "";
+catCharacter.style.display = "none";
+document.body.appendChild(catCharacter);
+
+const catSize = 85;
+const catWalkDistance = 200;
+const catWalkSpeed = 90;
+const catFrameDuration = 200;
+
+let catWalkFrame = null;
+let catWalking = false;
+
+function catWalkIn() {
+    if (catWalking) return;
+
+    catWalking = true;
+
+    const walkFrames = [
+        "../cat/cat-walk1.png",
+        "../cat/cat-walk2.png",
+        "../cat/cat-walk3.png"
+    ];
+
+    const startX = -catSize;
+    const endX = catWalkDistance;
+    const startTime = performance.now();
+
+    const walkDuration = ((endX - startX) / catWalkSpeed) * 1000;
+
+    catCharacter.style.width = catSize + "px";
+    catCharacter.style.height = catSize + "px";
+    catCharacter.style.left = startX + "px";
+    catCharacter.style.display = "block";
+    catCharacter.src = walkFrames[0];
+
+    function walk(now) {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / walkDuration, 1);
+
+        const x = startX + (endX - startX) * progress;
+        catCharacter.style.left = x + "px";
+
+        const frameIndex = Math.floor(elapsed / catFrameDuration) % walkFrames.length;
+        catCharacter.src = walkFrames[frameIndex];
+
+        if (progress < 1) {
+            catWalkFrame = requestAnimationFrame(walk);
+        } else {
+            catCharacter.src = "../cat/cat-sleep.png";
+            catWalkFrame = null;
+            catWalking = false;
         }
     }
 
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    catWalkFrame = requestAnimationFrame(walk);
+}
+
+
+/*-----------------------------------Kalkulator-----------------------------------*/
+
+// Warstwa na pływające okienka — niezależna od drzewa układu
+let floatingWindowsLayer = null;
+
+function getFloatingWindowsLayer() {
+    if (floatingWindowsLayer) return floatingWindowsLayer;
+
+    floatingWindowsLayer = document.createElement('div');
+    floatingWindowsLayer.id = 'floating-windows-layer';
+
+    Object.assign(floatingWindowsLayer.style, {
+        position: 'fixed',
+        inset: '0',
+        zIndex: '1000',
+        pointerEvents: 'none'
+    });
+
+    document.body.appendChild(floatingWindowsLayer);
+
+    return floatingWindowsLayer;
+}
+
+
+// Tworzenie okienka kalkulatora
+function createCalculatorWindow() {
+    const layer = getFloatingWindowsLayer();
+
+    const calculatorWindow = document.createElement('div');
+    calculatorWindow.className = 'floating-calculator-window';
+
+    Object.assign(calculatorWindow.style, {
+        position: 'fixed',
+        width: '320px',
+        height: '300px',
+        left: '50%',
+        top: '50%',
+        transform: 'translate(-50%, -50%)',
+        display: 'flex',
+        flexDirection: 'column',
+        background: '#36393f',
+        border: '1px solid #202225',
+        borderRadius: '8px',
+        boxShadow: '0 5px 20px rgba(0, 0, 0, 0.4)',
+        overflow: 'hidden',
+        pointerEvents: 'auto',
+        color: '#dcddde',
+        fontFamily: 'Arial, sans-serif'
+    });
+
+    calculatorWindow.innerHTML = `
+        <div class="calculator-title-bar" style="
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            background: #2f3136;
+            border-bottom: 1px solid #202225;
+            cursor: grab;
+            user-select: none;
+            font-size: 14px;
+            font-weight: bold;
+        ">
+            <span>🧮 Kalkulator</span>
+
+            <button class="close-calculator-btn" title="Zamknij okienko" style="
+                background: transparent;
+                border: none;
+                color: #8e9297;
+                cursor: pointer;
+                font-size: 16px;
+                padding: 2px 6px;
+            ">✕</button>
+        </div>
+
+        <div class="calculator-content" style="
+            flex: 1;
+            min-height: 0;
+            padding: 12px;
+            overflow: auto;
+        "></div>
+    `;
+
+    layer.appendChild(calculatorWindow);
+
+    // Zamknięcie okienka bez zmiany układu innych elementów
+    calculatorWindow.querySelector('.close-calculator-btn')
+        .addEventListener('click', () => {
+            calculatorWindow.remove();
+        });
+
+    // Przesuwanie okienka za górny pasek
+    const titleBar = calculatorWindow.querySelector('.calculator-title-bar');
+
+    titleBar.addEventListener('mousedown', (event) => {
+        if (event.target.closest('.close-calculator-btn')) return;
+
+        event.preventDefault();
+
+        const rect = calculatorWindow.getBoundingClientRect();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const startLeft = rect.left;
+        const startTop = rect.top;
+
+        titleBar.style.cursor = 'grabbing';
+
+        function moveWindow(moveEvent) {
+            const canvasRect = mainContentEl.getBoundingClientRect();
+
+            let newLeft = startLeft + moveEvent.clientX - startX;
+            let newTop = startTop + moveEvent.clientY - startY;
+
+            // Okienko pozostaje w granicach kanwy
+            newLeft = Math.max(
+                canvasRect.left,
+                Math.min(newLeft, canvasRect.right - rect.width)
+            );
+
+            newTop = Math.max(
+                canvasRect.top,
+                Math.min(newTop, canvasRect.bottom - rect.height)
+            );
+
+            calculatorWindow.style.left = `${newLeft}px`;
+            calculatorWindow.style.top = `${newTop}px`;
+            calculatorWindow.style.transform = 'none';
+        }
+
+        function stopMoving() {
+            window.removeEventListener('mousemove', moveWindow);
+            window.removeEventListener('mouseup', stopMoving);
+            titleBar.style.cursor = 'grab';
+        }
+
+        window.addEventListener('mousemove', moveWindow);
+        window.addEventListener('mouseup', stopMoving);
+    });
+
+    // Tutaj później uruchomimy właściwy kalkulator
+    initCalculator(calculatorWindow);
+}
+
+
+// Miejsce na całą logikę kalkulatora — dopiszemy ją później
+function initCalculator(windowElement) {
+
+}
+
+
+function openCalc(){
+    createCalculatorWindow();
+    document.getElementById('new-item-menu').classList.remove('show');
+}
+
+
+function initCalculator(windowElement) {
+    const content = windowElement.querySelector('.calculator-content');
+
+    //----------------Zmienne kalkulatora----------------//
+
+    let currentInput = '0';
+    let previousInput = null;
+    let operator = null;
+    let shouldResetDisplay = false;
+
+    //----------------Wygląd kalkulatora----------------//
+
+    content.innerHTML = `
+        <div class="calculator-display" style="
+            background: #202225;
+            padding: 15px;
+            margin: 10px;
+            border-radius: 5px;
+            text-align: right;
+            font-size: 28px;
+            min-height: 35px;
+            overflow: hidden;
+            overflow-wrap: anywhere;
+        ">0</div>
+
+        <div class="calculator-buttons" style="
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px;
+            padding: 0 10px 10px;
+            flex: 1;
+        ">
+            <button data-action="clear">C</button>
+            <button data-action="backspace">⌫</button>
+            <button data-operator="/">÷</button>
+            <button data-operator="*">×</button>
+
+            <button data-number="7">7</button>
+            <button data-number="8">8</button>
+            <button data-number="9">9</button>
+            <button data-operator="-">−</button>
+
+            <button data-number="4">4</button>
+            <button data-number="5">5</button>
+            <button data-number="6">6</button>
+            <button data-operator="+">+</button>
+
+            <button data-number="1">1</button>
+            <button data-number="2">2</button>
+            <button data-number="3">3</button>
+            <button data-action="equals" style="
+                grid-row: span 2;
+                background: #5865f2;
+            ">=</button>
+
+            <button data-action="sign">±</button>
+            <button data-number="0">0</button>
+            <button data-action="decimal">.</button>
+        </div>
+    `;
+
+    const display = content.querySelector('.calculator-display');
+    const buttons = content.querySelectorAll('button');
+
+    buttons.forEach(button => {
+        Object.assign(button.style, {
+            border: 'none',
+            borderRadius: '5px',
+            background: '#4f545c',
+            color: '#ffffff',
+            fontSize: '18px',
+            cursor: 'pointer'
+        });
+
+        button.addEventListener('mouseenter', () => {
+            button.style.filter = 'brightness(1.2)';
+        });
+
+        button.addEventListener('mouseleave', () => {
+            button.style.filter = 'none';
+        });
+    });
+
+    //----------------Wyświetlanie----------------//
+
+    function updateDisplay() {
+        display.textContent = currentInput;
+    }
+
+    //----------------Obliczenia----------------//
+
+    function calculate(a, b, op) {
+        if (op === '+') return a + b;
+        if (op === '-') return a - b;
+        if (op === '*') return a * b;
+        if (op === '/') return b === 0 ? null : a / b;
+        return b;
+    }
+
+    //----------------Obsługa przycisków----------------//
+
+    buttons.forEach(button => {
+        button.addEventListener('click', () => {
+            const number = button.dataset.number;
+            const action = button.dataset.action;
+            const newOperator = button.dataset.operator;
+
+            if (number !== undefined) {
+                if (currentInput === 'Błąd') currentInput = '0';
+
+                if (currentInput === '0' || shouldResetDisplay) {
+                    currentInput = number;
+                    shouldResetDisplay = false;
+                } else if (currentInput.length < 15) {
+                    currentInput += number;
+                }
+
+                updateDisplay();
+                return;
+            }
+
+            if (action === 'clear') {
+                currentInput = '0';
+                previousInput = null;
+                operator = null;
+                shouldResetDisplay = false;
+                updateDisplay();
+                return;
+            }
+
+            if (action === 'backspace') {
+                if (shouldResetDisplay || currentInput === 'Błąd') {
+                    currentInput = '0';
+                    shouldResetDisplay = false;
+                } else {
+                    currentInput = currentInput.length > 1
+                        ? currentInput.slice(0, -1)
+                        : '0';
+                }
+
+                updateDisplay();
+                return;
+            }
+
+            if (action === 'decimal') {
+                if (shouldResetDisplay || currentInput === 'Błąd') {
+                    currentInput = '0';
+                    shouldResetDisplay = false;
+                }
+
+                if (!currentInput.includes('.')) {
+                    currentInput += '.';
+                }
+
+                updateDisplay();
+                return;
+            }
+
+            if (action === 'sign') {
+                if (currentInput !== '0' && currentInput !== 'Błąd') {
+                    currentInput = String(-Number(currentInput));
+                }
+
+                updateDisplay();
+                return;
+            }
+
+            if (newOperator) {
+                if (currentInput === 'Błąd') return;
+
+                if (operator && !shouldResetDisplay) {
+                    const result = calculate(
+                        previousInput,
+                        Number(currentInput),
+                        operator
+                    );
+
+                    if (result === null || !Number.isFinite(result)) {
+                        currentInput = 'Błąd';
+                        previousInput = null;
+                        operator = null;
+                        shouldResetDisplay = true;
+                        updateDisplay();
+                        return;
+                    }
+
+                    currentInput = String(Number(result.toPrecision(12)));
+                }
+
+                previousInput = Number(currentInput);
+                operator = newOperator;
+                shouldResetDisplay = true;
+                updateDisplay();
+                return;
+            }
+
+            if (action === 'equals' && operator && previousInput !== null) {
+                const result = calculate(
+                    previousInput,
+                    Number(currentInput),
+                    operator
+                );
+
+                if (result === null || !Number.isFinite(result)) {
+                    currentInput = 'Błąd';
+                } else {
+                    currentInput = String(Number(result.toPrecision(12)));
+                }
+
+                previousInput = null;
+                operator = null;
+                shouldResetDisplay = true;
+                updateDisplay();
+            }
+        });
+    });
+}
+
+
+/*-----------------------------------Wykresy funkcji-----------------------------------*/
+
+// Inicjalizacja edytora wykresów
+function initGraph(pane, fileName) {
+    const container = pane.querySelector('.graph-container');
+    if (!container) return;
+
+    //----------------Zmienne wykresu----------------//
+
+    const colors = [
+        '#5865f2',
+        '#ed4245',
+        '#3ba55d',
+        '#faa61a',
+        '#eb459e',
+        '#00b0f4'
+    ];
+
+    let functions = [];
+    let nextFunctionId = 1;
+
+    let scale = 50; // Liczba pikseli na jedną jednostkę
+    let offsetX = 0;
+    let offsetY = 0;
+
+    let isPanning = false;
+    let panStartX = 0;
+    let panStartY = 0;
+    let startOffsetX = 0;
+    let startOffsetY = 0;
+
+    //----------------Interfejs----------------//
+
+    container.style.position = 'relative';
+    container.style.display = 'flex';
+    container.style.flexDirection = 'column';
+    container.style.background = '#202225';
+    container.style.color = '#dcddde';
+    container.style.minHeight = '0';
+
+    container.innerHTML = `
+        <div class="graph-toolbar" style="
+            display:flex;
+            align-items:center;
+            gap:8px;
+            padding:10px;
+            background:#2f3136;
+            border-bottom:1px solid #484b52;
+            flex-wrap:wrap;
+        ">
+            <input class="graph-expression"
+                type="text"
+                placeholder="Np. x^2 albo sin(x)"
+                style="
+                    flex:1;
+                    min-width:130px;
+                    padding:9px;
+                    background:#202225;
+                    color:white;
+                    border:1px solid #484b52;
+                    border-radius:5px;
+                ">
+
+            <button class="graph-add">+ Dodaj</button>
+            <button class="graph-reset">Wyśrodkuj</button>
+        </div>
+
+        <div class="graph-function-list" style="
+            display:flex;
+            flex-direction:column;
+            gap:5px;
+            padding:8px 10px;
+            background:#2f3136;
+            max-height:115px;
+            overflow-y:auto;
+        "></div>
+
+        <div class="graph-canvas-wrapper" style="
+            flex:1;
+            min-height:0;
+            position:relative;
+            overflow:hidden;
+        ">
+            <canvas class="graph-canvas" style="
+                position:absolute;
+                inset:0;
+                width:100%;
+                height:100%;
+                display:block;
+                cursor:crosshair;
+                touch-action:none;
+            "></canvas>
+        </div>
+    `;
+
+    const input = container.querySelector('.graph-expression');
+    const addButton = container.querySelector('.graph-add');
+    const resetButton = container.querySelector('.graph-reset');
+    const functionList = container.querySelector('.graph-function-list');
+    const canvas = container.querySelector('.graph-canvas');
+    const ctx = canvas.getContext('2d');
+
+    //----------------Wczytywanie zapisanych danych----------------//
+
+    function loadGraphData(content) {
+        if (!content) {
+            functions = [];
+            nextFunctionId = 1;
+            scale = 50;
+            offsetX = 0;
+            offsetY = 0;
+            return true;
+        }
+
+        try {
+            const data = JSON.parse(content);
+
+            if (data.version !== 1 || !Array.isArray(data.functions)) {
+                return false;
+            }
+
+            scale = 50;
+            offsetX = 0;
+            offsetY = 0;
+            functions = data.functions
+                .filter(f =>
+                    typeof f.expression === 'string' &&
+                    typeof f.color === 'string'
+                )
+                .map(f => ({
+                    id: nextFunctionId++,
+                    expression: f.expression,
+                    color: f.color
+                }));
+
+            if (data.view) {
+                if (Number.isFinite(data.view.scale)) {
+                    scale = Math.max(5, Math.min(300, data.view.scale));
+                }
+
+                if (Number.isFinite(data.view.offsetX)) {
+                    offsetX = data.view.offsetX;
+                }
+
+                if (Number.isFinite(data.view.offsetY)) {
+                    offsetY = data.view.offsetY;
+                }
+            }
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    loadGraphData(fileContents[fileName] || '');
+
+    //----------------Zapis i synchronizacja----------------//
+
+    function saveGraphData() {
+        const data = {
+            version: 1,
+            functions: functions.map(f => ({
+                expression: f.expression,
+                color: f.color
+            })),
+            view: {
+                scale,
+                offsetX,
+                offsetY
+            }
+        };
+
+        const content = JSON.stringify(data);
+
+        fileContents[fileName] = content;
+
+        if (socket) {
+            socket.emit('graph-content-change', {
+                fileName,
+                content
+            });
+        }
+    }
+
+    //----------------Parser wyrażeń matematycznych----------------//
+
+    // Obsługiwane operatory: + - * / ^
+    // Obsługiwane funkcje: sin, cos, tan, sqrt, abs, ln, log, exp
+    // Stałe: pi, e
+    // Zmienna: x
+    //
+    // Parser nie wykonuje kodu JavaScript z pola tekstowego.
+
+    function compileExpression(expression) {
+        const tokens = [];
+        const tokenRegex =
+            /\s*(\d+(?:\.\d*)?(?:e[+-]?\d+)?|[a-zA-Z]+|[()+\-*/^])/gy;
+
+        let position = 0;
+
+        while (position < expression.length) {
+            tokenRegex.lastIndex = position;
+            const match = tokenRegex.exec(expression);
+
+            if (!match) {
+                throw new Error('Nieprawidłowy znak: ' + expression[position]);
+            }
+
+            tokens.push(match[1]);
+            position = tokenRegex.lastIndex;
+        }
+
+        let index = 0;
+
+        function peek() {
+            return tokens[index];
+        }
+
+        function consume() {
+            return tokens[index++];
+        }
+
+        function parsePrimary() {
+            const token = consume();
+
+            if (token === undefined) {
+                throw new Error('Niepełne wyrażenie');
+            }
+
+            if (token === '(') {
+                const value = parseSum();
+
+                if (consume() !== ')') {
+                    throw new Error('Brak zamykającego nawiasu');
+                }
+
+                return value;
+            }
+
+            if (token === '+') return parseUnary();
+            if (token === '-') {
+                const value = parseUnary();
+                return x => -value(x);
+            }
+
+            if (/^\d/.test(token)) {
+                const number = Number(token);
+                return () => number;
+            }
+
+            if (/^[a-zA-Z]+$/.test(token)) {
+                const name = token.toLowerCase();
+
+                if (name === 'x') return x => x;
+                if (name === 'pi') return () => Math.PI;
+                if (name === 'e') return () => Math.E;
+
+                const mathFunctions = {
+                    sin: Math.sin,
+                    cos: Math.cos,
+                    tan: Math.tan,
+                    sqrt: Math.sqrt,
+                    abs: Math.abs,
+                    ln: Math.log,
+                    log: Math.log10,
+                    exp: Math.exp
+                };
+
+                if (!(name in mathFunctions)) {
+                    throw new Error('Nieznana funkcja: ' + name);
+                }
+
+                if (consume() !== '(') {
+                    throw new Error('Po ' + name + ' wpisz nawias, np. sin(x)');
+                }
+
+                const argument = parseSum();
+
+                if (consume() !== ')') {
+                    throw new Error('Brak zamykającego nawiasu');
+                }
+
+                const fn = mathFunctions[name];
+
+                return x => fn(argument(x));
+            }
+
+            throw new Error('Nieoczekiwany element: ' + token);
+        }
+
+        function parseUnary() {
+            return parsePrimary();
+        }
+
+        function parsePower() {
+            const left = parseUnary();
+
+            if (peek() === '^') {
+                consume();
+                const right = parsePower();
+                return x => Math.pow(left(x), right(x));
+            }
+
+            return left;
+        }
+
+        function parseProduct() {
+            let left = parsePower();
+
+            while (peek() === '*' || peek() === '/') {
+                const operator = consume();
+                const right = parsePower();
+                const previous = left;
+
+                left = operator === '*'
+                    ? x => previous(x) * right(x)
+                    : x => previous(x) / right(x);
+            }
+
+            return left;
+        }
+
+        function parseSum() {
+            let left = parseProduct();
+
+            while (peek() === '+' || peek() === '-') {
+                const operator = consume();
+                const right = parseProduct();
+                const previous = left;
+
+                left = operator === '+'
+                    ? x => previous(x) + right(x)
+                    : x => previous(x) - right(x);
+            }
+
+            return left;
+        }
+
+        if (tokens.length === 0) {
+            throw new Error('Wpisz funkcję');
+        }
+
+        const result = parseSum();
+
+        if (index !== tokens.length) {
+            throw new Error('Nieoczekiwany element: ' + peek());
+        }
+
+        return result;
+    }
+
+    //----------------Rysowanie siatki i osi----------------//
+
+    function drawGraph() {
+        const width = canvas.width;
+        const height = canvas.height;
+
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = '#202225';
+        ctx.fillRect(0, 0, width, height);
+
+        const centerX = width / 2 + offsetX;
+        const centerY = height / 2 + offsetY;
+
+        // Dobór odstępów siatki zależnie od przybliżenia.
+        const rawStep = 50 / scale;
+        const power = Math.pow(10, Math.floor(Math.log10(rawStep)));
+
+        const normalized = rawStep / power;
+        const niceStep = normalized <= 1 ? 1
+            : normalized <= 2 ? 2
+            : normalized <= 5 ? 5
+            : 10;
+
+        const step = niceStep * power;
+        const pixelStep = step * scale;
+
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = '#30343b';
+        ctx.beginPath();
+
+        const startGridX =
+            ((centerX % pixelStep) + pixelStep) % pixelStep;
+        const startGridY =
+            ((centerY % pixelStep) + pixelStep) % pixelStep;
+
+        for (let x = startGridX; x < width; x += pixelStep) {
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, height);
+        }
+
+        for (let y = startGridY; y < height; y += pixelStep) {
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+        }
+
+        ctx.stroke();
+
+        // Osie współrzędnych.
+        ctx.strokeStyle = '#aeb4be';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+
+        if (centerY >= 0 && centerY <= height) {
+            ctx.moveTo(0, centerY);
+            ctx.lineTo(width, centerY);
+        }
+
+        if (centerX >= 0 && centerX <= width) {
+            ctx.moveTo(centerX, 0);
+            ctx.lineTo(centerX, height);
+        }
+
+        ctx.stroke();
+
+        // Opisy wartości na osiach.
+        ctx.fillStyle = '#aeb4be';
+        ctx.font = '12px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+
+        for (let x = startGridX; x < width; x += pixelStep) {
+            const value = (x - centerX) / scale;
+            if (Math.abs(value) < step * 0.01) continue;
+
+            if (centerY >= -5 && centerY < height - 15) {
+                ctx.fillText(
+                    Number(value.toPrecision(5)),
+                    x,
+                    centerY + 5
+                );
+            }
+        }
+
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+
+        for (let y = startGridY; y < height; y += pixelStep) {
+            const value = (centerY - y) / scale;
+            if (Math.abs(value) < step * 0.01) continue;
+
+            if (centerX >= 0 && centerX < width - 35) {
+                ctx.fillText(
+                    Number(value.toPrecision(5)),
+                    centerX + 5,
+                    y
+                );
+            }
+        }
+
+        // Rysowanie wszystkich dodanych funkcji.
+        functions.forEach(f => {
+            let evaluate;
+
+            try {
+                evaluate = compileExpression(f.expression);
+            } catch (error) {
+                return;
+            }
+
+            ctx.beginPath();
+            ctx.strokeStyle = f.color;
+            ctx.lineWidth = 2;
+            ctx.lineJoin = 'round';
+
+            let drawing = false;
+            let previousY = null;
+
+            for (let px = 0; px < width; px++) {
+                const x = (px - centerX) / scale;
+                let y;
+
+                try {
+                    y = evaluate(x);
+                } catch (error) {
+                    drawing = false;
+                    previousY = null;
+                    continue;
+                }
+
+                const py = centerY - y * scale;
+
+                if (
+                    !Number.isFinite(py) ||
+                    Math.abs(py) > height * 10
+                ) {
+                    drawing = false;
+                    previousY = null;
+                    continue;
+                }
+
+                // Nie łączymy odległych punktów, np. przy asymptotach.
+                if (
+                    !drawing ||
+                    (previousY !== null &&
+                    Math.abs(py - previousY) > height * 0.5)
+                ) {
+                    ctx.moveTo(px, py);
+                } else {
+                    ctx.lineTo(px, py);
+                }
+
+                drawing = true;
+                previousY = py;
+            }
+
+            ctx.stroke();
+        });
+    }
+
+    //----------------Lista funkcji----------------//
+
+    function renderFunctionList() {
+        functionList.innerHTML = '';
+
+        if (functions.length === 0) {
+            const empty = document.createElement('span');
+            empty.textContent = 'Dodaj funkcję, aby wyświetlić wykres.';
+            empty.style.color = '#8e9297';
+            empty.style.fontSize = '13px';
+            functionList.appendChild(empty);
+            return;
+        }
+
+        functions.forEach(f => {
+            const row = document.createElement('div');
+
+            Object.assign(row.style, {
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                minHeight: '28px'
+            });
+
+            const colorMark = document.createElement('span');
+            colorMark.style.background = f.color;
+            colorMark.style.width = '12px';
+            colorMark.style.height = '12px';
+            colorMark.style.borderRadius = '50%';
+            colorMark.style.flexShrink = '0';
+
+            const expression = document.createElement('span');
+            expression.textContent = 'y = ' + f.expression;
+            expression.style.flex = '1';
+            expression.style.fontSize = '13px';
+            expression.style.overflowWrap = 'anywhere';
+
+            const removeButton = document.createElement('button');
+            removeButton.textContent = '✕';
+            removeButton.title = 'Usuń funkcję';
+            removeButton.style.cssText =
+                'background:#4f545c;color:white;border:0;' +
+                'border-radius:4px;padding:4px 8px;cursor:pointer;';
+
+            removeButton.addEventListener('click', () => {
+                functions = functions.filter(item => item.id !== f.id);
+                renderFunctionList();
+                drawGraph();
+                saveGraphData();
+            });
+
+            row.append(colorMark, expression, removeButton);
+            functionList.appendChild(row);
+        });
+    }
+
+    //----------------Dodawanie funkcji----------------//
+
+    function addFunction(expression, shouldSave = true) {
+        expression = expression.trim();
+
+        if (!expression) return;
+
+        try {
+            // Sprawdź wyrażenie, zanim trafi na listę.
+            compileExpression(expression);
+
+            functions.push({
+                id: nextFunctionId++,
+                expression,
+                color: colors[(nextFunctionId - 2) % colors.length]
+            });
+
+            input.value = '';
+            renderFunctionList();
+            drawGraph();
+
+            if (shouldSave) saveGraphData();
+        } catch (error) {
+            alert('Nieprawidłowa funkcja: ' + error.message);
+        }
+    }
+
+    addButton.addEventListener('click', () => {
+        addFunction(input.value);
+    });
+
+    input.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            addFunction(input.value);
+        }
+    });
+
+    //----------------Przybliżanie i przesuwanie----------------//
+
+    resetButton.addEventListener('click', () => {
+        scale = 50;
+        offsetX = 0;
+        offsetY = 0;
+        drawGraph();
+        saveGraphData();
+    });
+
+    canvas.addEventListener('contextmenu', event => {
+        event.preventDefault();
+    });
+
+    canvas.addEventListener('pointerdown', event => {
+        if (event.button !== 2 && event.button !== 1) return;
+
+        isPanning = true;
+        panStartX = event.clientX;
+        panStartY = event.clientY;
+        startOffsetX = offsetX;
+        startOffsetY = offsetY;
+
+        canvas.style.cursor = 'grabbing';
+        canvas.setPointerCapture(event.pointerId);
+        event.preventDefault();
+    });
+
+    canvas.addEventListener('pointermove', event => {
+        if (!isPanning) return;
+
+        const rect = canvas.getBoundingClientRect();
+
+        offsetX = startOffsetX +
+            (event.clientX - panStartX) * (canvas.width / rect.width);
+
+        offsetY = startOffsetY +
+            (event.clientY - panStartY) * (canvas.height / rect.height);
+
+        drawGraph();
+    });
+
+    function stopPanning() {
+        if (!isPanning) return;
+
+        isPanning = false;
+        canvas.style.cursor = 'crosshair';
+        saveGraphData();
+    }
+
+    canvas.addEventListener('pointerup', stopPanning);
+    canvas.addEventListener('pointercancel', stopPanning);
+    canvas.addEventListener('lostpointercapture', stopPanning);
+
+    canvas.addEventListener('wheel', event => {
+        event.preventDefault();
+
+        const rect = canvas.getBoundingClientRect();
+
+        const mouseX =
+            (event.clientX - rect.left) * (canvas.width / rect.width);
+
+        const mouseY =
+            (event.clientY - rect.top) * (canvas.height / rect.height);
+
+        const oldScale = scale;
+        const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
+
+        scale = Math.max(5, Math.min(300, scale * factor));
+
+        // Punkt pod kursorem pozostaje na swoim miejscu.
+        offsetX = mouseX -
+            (mouseX - canvas.width / 2 - offsetX) * (scale / oldScale)
+            - canvas.width / 2;
+
+        offsetY = mouseY -
+            (mouseY - canvas.height / 2 - offsetY) * (scale / oldScale)
+            - canvas.height / 2;
+
+        drawGraph();
+        saveGraphData();
+    }, { passive: false });
+
+    //----------------Dopasowanie do rozmiaru panelu----------------//
+
+    function resizeCanvas() {
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+
+        const dpr = window.devicePixelRatio || 1;
+
+        canvas.width = Math.round(rect.width * dpr);
+        canvas.height = Math.round(rect.height * dpr);
+
+        drawGraph();
+    }
+
+    const resizeObserver = new ResizeObserver(resizeCanvas);
+    resizeObserver.observe(container);
+
+    //----------------Synchronizacja z innymi użytkownikami----------------//
+
+    let lastAppliedRemoteContent = fileContents[fileName] || '';
+
+    function handleRemoteGraphChange({ fileName: changedFile, content }) {
+        if (
+            changedFile !== fileName ||
+            typeof content !== 'string' ||
+            content === lastAppliedRemoteContent
+        ) {
+            return;
+        }
+
+        lastAppliedRemoteContent = content;
+        loadRemoteGraph(content);
+    }
+
+    function loadRemoteGraph(content) {
+        const oldFunctions = functions;
+        const oldNextFunctionId = nextFunctionId;
+        const oldScale = scale;
+        const oldOffsetX = offsetX;
+        const oldOffsetY = offsetY;
+
+        functions = [];
+        nextFunctionId = 1;
+
+        if (!loadGraphData(content)) {
+            functions = oldFunctions;
+            nextFunctionId = oldNextFunctionId;
+            scale = oldScale;
+            offsetX = oldOffsetX;
+            offsetY = oldOffsetY;
+        }
+
+        renderFunctionList();
+        drawGraph();
+    }
+
+    if (socket) {
+        socket.on('graph-content-change', handleRemoteGraphChange);
+        socket.on('file-content-change', handleRemoteGraphChange);
+
+        pane.querySelector('.close-pane-btn').addEventListener('click', () => {
+            socket.off('graph-content-change', handleRemoteGraphChange);
+            socket.off('file-content-change', handleRemoteGraphChange);
+            resizeObserver.disconnect();
+        }, { once: true });
+    }
+
+    //----------------Start----------------//
+
+    renderFunctionList();
+
+    // Początkowe ustawienie rozmiaru po utworzeniu panelu.
+    requestAnimationFrame(resizeCanvas);
 }
