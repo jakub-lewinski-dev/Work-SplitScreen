@@ -40,6 +40,10 @@ if (socket) {
         });
     });
 
+    socket.on('graph-content-change', ({ fileName, content }) => {
+        fileContents[fileName] = content;
+    });
+
     socket.on('file-renamed', ({ oldName, newName }) => {
         applyFileRename(oldName, newName);
     });
@@ -2052,15 +2056,25 @@ function initGraph(pane, fileName) {
     //----------------Wczytywanie zapisanych danych----------------//
 
     function loadGraphData(content) {
-        if (!content) return;
+        if (!content) {
+            functions = [];
+            nextFunctionId = 1;
+            scale = 50;
+            offsetX = 0;
+            offsetY = 0;
+            return true;
+        }
 
         try {
             const data = JSON.parse(content);
 
             if (data.version !== 1 || !Array.isArray(data.functions)) {
-                return;
+                return false;
             }
 
+            scale = 50;
+            offsetX = 0;
+            offsetY = 0;
             functions = data.functions
                 .filter(f =>
                     typeof f.expression === 'string' &&
@@ -2085,8 +2099,9 @@ function initGraph(pane, fileName) {
                     offsetY = data.view.offsetY;
                 }
             }
+            return true;
         } catch (error) {
-            // Pusty plik rozpoczyna nowy wykres.
+            return false;
         }
     }
 
@@ -2113,7 +2128,7 @@ function initGraph(pane, fileName) {
         fileContents[fileName] = content;
 
         if (socket) {
-            socket.emit('file-content-change', {
+            socket.emit('graph-content-change', {
                 fileName,
                 content
             });
@@ -2641,20 +2656,24 @@ function initGraph(pane, fileName) {
 
     //----------------Synchronizacja z innymi użytkownikami----------------//
 
-    let applyingRemoteUpdate = false;
+    let lastAppliedRemoteContent = fileContents[fileName] || '';
 
     function handleRemoteGraphChange({ fileName: changedFile, content }) {
-        if (changedFile !== fileName || !content) return;
+        if (
+            changedFile !== fileName ||
+            typeof content !== 'string' ||
+            content === lastAppliedRemoteContent
+        ) {
+            return;
+        }
 
-        applyingRemoteUpdate = true;
-
+        lastAppliedRemoteContent = content;
         loadRemoteGraph(content);
-
-        applyingRemoteUpdate = false;
     }
 
     function loadRemoteGraph(content) {
         const oldFunctions = functions;
+        const oldNextFunctionId = nextFunctionId;
         const oldScale = scale;
         const oldOffsetX = offsetX;
         const oldOffsetY = offsetY;
@@ -2662,10 +2681,9 @@ function initGraph(pane, fileName) {
         functions = [];
         nextFunctionId = 1;
 
-        loadGraphData(content);
-
-        if (functions.length === 0 && oldFunctions.length > 0) {
+        if (!loadGraphData(content)) {
             functions = oldFunctions;
+            nextFunctionId = oldNextFunctionId;
             scale = oldScale;
             offsetX = oldOffsetX;
             offsetY = oldOffsetY;
@@ -2676,9 +2694,11 @@ function initGraph(pane, fileName) {
     }
 
     if (socket) {
+        socket.on('graph-content-change', handleRemoteGraphChange);
         socket.on('file-content-change', handleRemoteGraphChange);
 
         pane.querySelector('.close-pane-btn').addEventListener('click', () => {
+            socket.off('graph-content-change', handleRemoteGraphChange);
             socket.off('file-content-change', handleRemoteGraphChange);
             resizeObserver.disconnect();
         }, { once: true });

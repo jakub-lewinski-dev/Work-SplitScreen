@@ -46,6 +46,21 @@ io.on('connection', (socket) => {
     socket.broadcast.emit('file-content-change', { fileName, content });
   });
 
+  socket.on('graph-content-change', ({ fileName, content } = {}) => {
+    if (
+      typeof fileName !== 'string' ||
+      path.extname(fileName) !== '.graph' ||
+      typeof content !== 'string' ||
+      !files.has(fileName)
+    ) {
+      return;
+    }
+
+    files.set(fileName, content);
+    socket.broadcast.emit('graph-content-change', { fileName, content });
+    socket.broadcast.emit('file-content-change', { fileName, content });
+  });
+
   socket.on('rename-file', ({ oldName, newName }, acknowledge) => {
     if (!files.has(oldName) || typeof newName !== 'string' || !newName.trim() || files.has(newName)) {
       if (typeof acknowledge === 'function') acknowledge(false);
