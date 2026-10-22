@@ -1,0 +1,35 @@
+{
+  "name": "splitscreen-workspace",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "socket.io": "^4.8.4"
+  },
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.example.splitscreen",
+    "productName": "Splitscreen Workspace",
+    "files": [
+      "server/**/*",
+      "client/**/*",
+      "main.js",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "zip",
+      "icon": "Work-Splitscreen-icon.ico"
+    }
+  }
+}
