@@ -918,6 +918,10 @@ function initPaint(pane, fileName) {
             display: block;
             position: absolute;
             inset: 0;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
         "></canvas>
 
         <div class="paint-toolbar" style="
@@ -1228,98 +1232,158 @@ function initPaint(pane, fileName) {
         e.preventDefault();
     });
 
-    canvas.addEventListener('mousedown', e => {
+    let activePointerId = null;
+    let pointerToolBeforeTemporaryEraser = null;
+
+    function getCanvasPoint(e) {
         const rect = canvas.getBoundingClientRect();
+        return {
+            canvasX: (e.clientX - rect.left) * (canvas.width / rect.width),
+            canvasY: (e.clientY - rect.top) * (canvas.height / rect.height)
+        };
+    }
 
-        const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
-        const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+    function drawPointerPoint(e) {
+        const { canvasX, canvasY } = getCanvasPoint(e);
+        const bufferX = (canvasX - offsetX) / scale;
+        const bufferY = (canvasY - offsetY) / scale;
 
-        if (e.button === 2) {
-            isPanning = true;
+        if (
+            bufferX < 0 ||
+            bufferY < 0 ||
+            bufferX >= bufferCanvas.width ||
+            bufferY >= bufferCanvas.height
+        ) {
+            return;
+        }
 
-            startX = mouseX - offsetX;
-            startY = mouseY - offsetY;
+        const width = brushSize;
 
-            canvas.style.cursor = 'grabbing';
-            e.preventDefault();
-        } else if (e.button === 0) {
-            const bufferX = (mouseX - offsetX) / scale;
-            const bufferY = (mouseY - offsetY) / scale;
-
-            if (
-                bufferX < 0 ||
-                bufferY < 0 ||
-                bufferX >= bufferCanvas.width ||
-                bufferY >= bufferCanvas.height
-            ) {
-                return;
-            }
-
-            isDrawing = true;
-            lastX = bufferX;
-            lastY = bufferY;
-
+        if (lastX === bufferX && lastY === bufferY) {
             bufferCtx.beginPath();
-            bufferCtx.arc(
-                bufferX,
-                bufferY,
-                brushSize / 2,
-                0,
-                Math.PI * 2
-            );
-
+            bufferCtx.arc(bufferX, bufferY, width / 2, 0, Math.PI * 2);
             bufferCtx.fillStyle =
                 activeTool === 'eraser' ? '#ffffff' : brushColor;
-
             bufferCtx.fill();
-
-            redraw();
-        }
-    });
-
-    canvas.addEventListener('mousemove', e => {
-        const rect = canvas.getBoundingClientRect();
-
-        const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
-        const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
-
-        if (isPanning) {
-            offsetX = mouseX - startX;
-            offsetY = mouseY - startY;
-
-            redraw();
-        } else if (isDrawing) {
-            const bufferX = (mouseX - offsetX) / scale;
-            const bufferY = (mouseY - offsetY) / scale;
-
+        } else {
             bufferCtx.beginPath();
             bufferCtx.moveTo(lastX, lastY);
             bufferCtx.lineTo(bufferX, bufferY);
-
             bufferCtx.strokeStyle =
                 activeTool === 'eraser' ? '#ffffff' : brushColor;
-
-            bufferCtx.lineWidth = brushSize;
+            bufferCtx.lineWidth = width;
             bufferCtx.lineCap = 'round';
             bufferCtx.lineJoin = 'round';
             bufferCtx.stroke();
-
-            lastX = bufferX;
-            lastY = bufferY;
-
-            redraw();
         }
+
+        lastX = bufferX;
+        lastY = bufferY;
+        redraw();
+    }
+
+    canvas.addEventListener('pointerdown', e => {
+        if (activePointerId !== null) return;
+
+        const { canvasX, canvasY } = getCanvasPoint(e);
+
+        if (e.button === 2 || e.button === 1) {
+            isPanning = true;
+            activePointerId = e.pointerId;
+            startX = canvasX - offsetX;
+            startY = canvasY - offsetY;
+            canvas.style.cursor = 'grabbing';
+            canvas.setPointerCapture(e.pointerId);
+            e.preventDefault();
+            return;
+        }
+
+        if (e.button !== 0) return;
+
+        const isPenEraser =
+            e.pointerType === 'pen' &&
+            (e.button === 5 || (typeof e.buttons === 'number' && (e.buttons & 32) !== 0));
+
+        if (isPenEraser) {
+            pointerToolBeforeTemporaryEraser = activeTool;
+            activeTool = 'eraser';
+            updateToolbar();
+        }
+
+        const bufferX = (canvasX - offsetX) / scale;
+        const bufferY = (canvasY - offsetY) / scale;
+
+        if (
+            bufferX < 0 ||
+            bufferY < 0 ||
+            bufferX >= bufferCanvas.width ||
+            bufferY >= bufferCanvas.height
+        ) {
+            return;
+        }
+
+        isDrawing = true;
+        activePointerId = e.pointerId;
+        lastX = bufferX;
+        lastY = bufferY;
+        canvas.setPointerCapture(e.pointerId);
+
+        drawPointerPoint(e);
+        e.preventDefault();
     });
 
-    window.addEventListener('mouseup', e => {
-        if (e.button === 2) {
-            isPanning = false;
-            canvas.style.cursor = 'crosshair';
+    canvas.addEventListener('pointermove', e => {
+        if (e.pointerId !== activePointerId) return;
+
+        if (isPanning) {
+            const { canvasX, canvasY } = getCanvasPoint(e);
+            offsetX = canvasX - startX;
+            offsetY = canvasY - startY;
+            redraw();
+            e.preventDefault();
+            return;
         }
 
-        if (e.button === 0 && isDrawing) {
+        if (!isDrawing) return;
+
+        const events = typeof e.getCoalescedEvents === 'function'
+            ? e.getCoalescedEvents()
+            : [e];
+
+        for (const pointerEvent of events) {
+            drawPointerPoint(pointerEvent);
+        }
+        e.preventDefault();
+    });
+
+    function stopPointerDrawing(e) {
+        if (e.pointerId !== activePointerId) return;
+
+        if (isDrawing) {
             isDrawing = false;
             saveDrawing();
+        }
+
+        if (pointerToolBeforeTemporaryEraser !== null) {
+            activeTool = pointerToolBeforeTemporaryEraser;
+            pointerToolBeforeTemporaryEraser = null;
+            updateToolbar();
+        }
+
+        isPanning = false;
+        activePointerId = null;
+        canvas.style.cursor = 'crosshair';
+
+        if (canvas.hasPointerCapture(e.pointerId)) {
+            canvas.releasePointerCapture(e.pointerId);
+        }
+    }
+
+    canvas.addEventListener('pointerup', stopPointerDrawing);
+    canvas.addEventListener('pointercancel', stopPointerDrawing);
+    canvas.addEventListener('lostpointercapture', e => {
+        if (e.pointerId === activePointerId) {
+            stopPointerDrawing(e);
         }
     });
 
